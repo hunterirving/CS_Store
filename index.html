@@ -182,6 +182,32 @@
 <script src="/static/deps/pdf.js"></script>
 
 <script>
+	// Spatial Audio
+	let audioContext;
+	let masterGain;
+
+	// Initialize audio context on user interaction
+	document.addEventListener('click', initAudioContext, { once: true });
+
+	function initAudioContext() {
+		audioContext = new (window.AudioContext || window.webkitAudioContext)();
+		masterGain = audioContext.createGain();
+		masterGain.connect(audioContext.destination);
+	}
+
+	// Utility functions for audio spatialization
+	function calculateDistance(node, centerX, centerY) {
+		const dx = node.position.x - centerX;
+		const dy = node.position.y - centerY;
+		return Math.sqrt(dx * dx + dy * dy);
+	}
+
+	function calculatePanning(node, centerX) {
+		const maxPan = 0.8; // Maximum panning effect
+		const relativeX = (node.position.x - centerX) / (window.innerWidth / 2);
+		return Math.max(-maxPan, Math.min(maxPan, relativeX));
+	}
+
 	// Theme stuff
 	let themes = [];
 	let currentThemeIndex = 0;
@@ -242,10 +268,8 @@
 	}
 
 	window.addEventListener('load', setInitialTheme);
-	// End Theme stuff
 	
 	pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
-	
 	const clamp = (x, min, max) =>
 	Math.min(Math.max(x, min), max)
 	
@@ -306,6 +330,9 @@
 			this.path = data.path;
 			this.inStage = false;
 			this.elem = document.createElement("div");
+			this.audioSource = null;
+			this.gainNode = null;
+			this.panNode = null;
 			
 			// Depths:
 			// 0: scene
@@ -402,6 +429,39 @@
 					audio.autoplay = true;
 					audio.play().catch(e => console.log("Autoplay prevented:", e));
 				}
+			}
+		}
+
+		setupAudioNodes() {
+			if (this.type === "audio/mpeg" && !this.audioSource && audioContext) {
+				const audio = this.content.querySelector('audio');
+				if (audio) {
+					this.audioSource = audioContext.createMediaElementSource(audio);
+					this.gainNode = audioContext.createGain();
+					this.panNode = audioContext.createStereoPanner();
+					
+					this.audioSource.connect(this.gainNode);
+					this.gainNode.connect(this.panNode);
+					this.panNode.connect(masterGain);
+				}
+			}
+		}
+
+		updateAudioSpatialization() {
+			if (this.gainNode && this.panNode) {
+				const centerX = scene.origin.x + window.innerWidth / (2 * scene.scale);
+				const centerY = scene.origin.y + window.innerHeight / (2 * scene.scale);
+				
+				const distance = calculateDistance(this, centerX, centerY);
+				const maxDistance = Math.sqrt(window.innerWidth * window.innerWidth + window.innerHeight * window.innerHeight) / (2 * scene.scale);
+				
+				// Volume based on distance
+				const volume = Math.max(0, 1 - distance / maxDistance);
+				this.gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+				
+				// Panning
+				const panning = calculatePanning(this, centerX);
+				this.panNode.pan.setValueAtTime(panning, audioContext.currentTime);
 			}
 		}
 		
@@ -731,6 +791,8 @@
 			this.children.push(node);
 			node.render();
 			node.setAutoplay();
+			node.setupAudioNodes();
+			node.updateAudioSpatialization();
 		}
 		
 		removeNode(node) {
@@ -751,7 +813,11 @@
 		
 		render() {
 			this.updateBackgroundGrid();
-			this.children.map(c => c.render());
+			this.children.forEach(c => {
+				c.render();
+				c.setupAudioNodes();
+				c.updateAudioSpatialization();
+			});
 		}
 		
 		wheel(e) {
@@ -780,6 +846,7 @@
 				child.depth = 1;
 				child.render();
 			}
+			this.render();
 		}
 		
 		gesturechange(e) {
@@ -819,7 +886,7 @@
 				},
 			});
 			scene.addNode(node);
-			node.setAutoplay();
+			node.setAutoplay(); // ?
 			
 			// Focus and make the new node editable
 			setTimeout(() => {
@@ -962,4 +1029,13 @@
 		}
 		setTimeout(autosave, 1000);
 	}
+
+	function updateAllAudioSpatialization() {
+		scene.children.forEach(node => {
+			node.updateAudioSpatialization();
+		});
+		requestAnimationFrame(updateAllAudioSpatialization);
+	}
+
+	updateAllAudioSpatialization();
 </script>
