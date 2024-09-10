@@ -1,6 +1,98 @@
 <style>
+	/* custom colors */
+	:root {
+		--coconut: #ffffff;
+		--licorice: #000000;
+		--wasabi: #ccff00;
+		--eggplant: #7700ff;
+
+		--murk: #8e9918;
+		--tadpole: #27350f;
+		--lilypad: #6f8823;
+		--reed: #4a5d23;
+
+		--pollen: #f4a127;
+		--loam: #5a352b;
+		--chlorophyll: #5aa83b;
+		--terracotta: #b15c2e;
+
+		--wheat: #d2c3a3;
+		--earth: #4a3c31;
+		--pumpkin: #cb7c52;
+		--tobacco: #7d6c55;
+
+		--moss: #20302f;
+		--goat-milk: #d8d3c9;
+		--burl: #231f20;
+		--flame: #c63728;
+
+		--soot: #181a1b;
+		--smoke: #e8e6e3;
+		--ash: #252829;
+		--cinder: #ff5532;
+	}
+
+	/* fonts */
+	@font-face {
+		font-family: BasteleurMoonlight;
+		src: url('resources/fonts/Basteleur-Moonlight.ttf') format('truetype');
+	}
+
+	:root {
+		--font-family: monospace;
+	}
+
+	/* themes */
+	:root[data-theme="woodstove"] {
+		--background: var(--soot);
+		--text: var(--smoke);
+		--highlight: var(--ash);
+		--accent: var(--cinder);
+		--font-family: BasteleurMoonlight;
+	}
+
+	:root[data-theme="gak"] {
+		--background: var(--coconut);
+		--text: var(--licorice);
+		--highlight: var(--wasabi);
+		--accent: var(--eggplant);
+	}
+
+	:root[data-theme="swamp"] {
+		--background: var(--murk);
+		--text: var(--tadpole);
+		--highlight: var(--lilypad);
+		--accent: var(--reed);
+	}
+
+	:root[data-theme="sunflower"] {
+		--background: var(--pollen);
+		--text: var(--loam);
+		--highlight: var(--chlorophyll);
+		--accent: var(--terracotta);
+	}
+
+	:root[data-theme="harvest"] {
+		--background: var(--wheat);
+		--text: var(--earth);
+		--highlight: var(--pumpkin);
+		--accent: var(--tobacco);
+	}
+
+	:root[data-theme="medieval"] {
+		--background: var(--moss);
+		--text: var(--goat-milk);
+		--highlight: var(--burl);
+		--accent: var(--flame);
+		& input[type="text"] {
+			font-family: MedievalSharp;
+		}
+	}
+
 	body {
-		font-family: monospace;
+		background-color: var(--background);
+		color: var(--text);
+		font-family: var(--font-family);
 		font-size: 12px;
 		width: 100%;
 		height: 100%;
@@ -8,8 +100,8 @@
 		overflow-y: hidden;
 		overflow-x: hidden;
 	}
+
 	#path {
-		background-color: #eee8d5;
 		font-size: 12px;
 		position: absolute;
 		top: 0px;
@@ -18,16 +110,18 @@
 		padding: 6px 10px 6px 10px;
 		border-radius: 3px;
 	}
+
 	#scene {
 		position: absolute;
 		top: 0px;
 		left: 0px;
 		width: 100%;
 		height: 100%;
-		background-image: linear-gradient(to right, #eee8d5 1px, transparent 1px),
-						linear-gradient(to bottom, #eee8d5 1px, transparent 1px);
-		background-color: #fdf6e3;
+		background-image: linear-gradient(to right, var(--highlight) 1px, transparent 1px),
+						  linear-gradient(to bottom, var(--highlight) 1px, transparent 1px);
+		background-color: var(--background);
 	}
+
 	#stage {
 		position: absolute;
 		top: 20px;
@@ -38,35 +132,47 @@
 		border: 1px solid;
 		border-radius: 3px;
 		z-index: 2;
-		background-color: #eee8d5;
 	}
+
 	.nodeInStage {
 		position: relative;
 		margin: 10px 15px;
 		z-index: 3;
 		cursor: grab;
 	}
+	
 	.nodeInScene {
 		position: absolute;
 		cursor: move;
+		border-radius: 5px;
+		background-color: var(--highlight);
+		display: inline-block; /* Change this from block to inline-block */
+		min-width: 100px; /* Add a minimum width */
 	}
+
 	.textNode {
 		margin: 0px;
 		border-radius: 5px;
-		background-color: #eee8d5;
-		
+		background-color: transparent;
 		box-shadow: none;
 		outline-style: none;
 		border-color: transparent;
 		overflow-wrap: break-word;
+		white-space: pre-wrap; /* Allow text to wrap */
+		word-break: break-word; /* Break words if necessary */
 	}
+
 	.dirNode {
 		margin: 0px;
 		border-radius: 5px;
-		background-color: #eee8e7;
 		
 		text-align: center;
 		word-break: break-all;
+	}
+
+	#path, #stage, .textNode, .dirNode {
+		background-color: var(--highlight);
+		color: var(--text);
 	}
 </style>
 
@@ -76,13 +182,75 @@
 <script src="/static/deps/pdf.js"></script>
 
 <script>
+	// Theme stuff
+	let themes = [];
+	let currentThemeIndex = 0;
+	let isF2Pressed = false;
+
+	function extractThemesFromCSS() {
+		const styleSheets = document.styleSheets;
+		for (let i = 0; i < styleSheets.length; i++) {
+			const rules = styleSheets[i].cssRules || styleSheets[i].rules;
+			for (let j = 0; j < rules.length; j++) {
+				const rule = rules[j];
+				if (rule.selectorText && rule.selectorText.startsWith(':root[data-theme=')) {
+					const theme = rule.selectorText.match(/data-theme="([^"]+)"/)[1];
+					themes.push(theme);
+				}
+			}
+		}
+	}
+
+	function updateNodeStyles() {
+		const highlightColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
+		const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+		const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
+
+		scene.children.forEach(node => {
+			node.elem.style.backgroundColor = highlightColor;
+			node.content.style.color = textColor;
+			node.content.style.fontFamily = fontFamily;
+		});
+	}
+
+	function cycleTheme() {
+		currentThemeIndex = (currentThemeIndex + 1) % themes.length;
+		document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
+		updateNodeStyles();
+	}
+
+	document.addEventListener('keydown', function(event) {
+		if (event.key === 'F2' && !isF2Pressed) {
+			event.preventDefault();
+			isF2Pressed = true;
+			cycleTheme();
+		}
+	});
+
+	document.addEventListener('keyup', function(event) {
+		if (event.key === 'F2') {
+			isF2Pressed = false;
+		}
+	});
+
+	function setInitialTheme() {
+		extractThemesFromCSS();
+		if (themes.length > 0) {
+			document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
+			updateNodeStyles();
+		}
+	}
+
+	window.addEventListener('load', setInitialTheme);
+	// End Theme stuff
+	
 	pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
 	
 	const clamp = (x, min, max) =>
 	Math.min(Math.max(x, min), max)
 	
 	const round = (x, n=0) => 10**(-n) * Math.round(x * 10**n);
-	
+
 	class Vec {
 		constructor({x, y, z=0}) {
 			this.x = x;
@@ -195,15 +363,26 @@
 		
 		render() {
 			const pos = scene.toViewport(this.position);
-			this.elem.style.left = pos.x;
-			this.elem.style.top = pos.y;
-			this.elem.style.zIndex = this.depth;
+			this.elem.style.left = pos.x + "px";
+			this.elem.style.top = pos.y + "px";
+			this.elem.style.zIndex = Math.min(this.depth, this.maxDepth);
 			this.elem.style.width = (this.width * scene.scale) + "px";
 			this.elem.style.height = (this.height * scene.scale) + "px";
+			this.elem.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+			this.elem.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
 			
 			this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
 			this.content.style.padding = (this.padding * scene.scale) + "px";
 			this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+			this.content.style.color = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+			this.content.style.fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
+			const highlightColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
+			const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+			const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
+
+			this.elem.style.backgroundColor = highlightColor;
+			this.content.style.color = textColor;
+			this.content.style.fontFamily = fontFamily;
 		}
 		
 		populateContent(data) {
@@ -328,11 +507,13 @@
 				
 			} else if (type === "text") {
 				const p = document.createElement("p");
-				p.innerHTML = path || "&nbsp;";
+				p.innerHTML = path || "";
 				p.classList.add("textNode");
 				this.ratio = 5;
 				
 				p.contentEditable = "true";
+				p.spellcheck = false;
+
 				p.addEventListener("click", (e) => {
 					e.stopPropagation();
 					p.focus();
@@ -346,7 +527,7 @@
 				});
 				p.addEventListener("blur", () => {
 					if (p.innerHTML.trim() === "") {
-						p.innerHTML = "&nbsp;";  // Prevents collapse when empty
+						p.innerHTML = "";
 					}
 					this.data.path = p.innerHTML;
 				});
