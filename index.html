@@ -129,7 +129,6 @@
 		width: 150px;
 		height: 95vh;
 		overflow-x: hidden;
-		border: 1px solid;
 		border-radius: 3px;
 		z-index: 2;
 	}
@@ -187,7 +186,7 @@
 	let masterGain;
 
 	// Initialize audio context on user interaction
-	document.addEventListener('click', initAudioContext, { once: true });
+	initAudioContext();
 
 	function initAudioContext() {
 		audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -202,10 +201,40 @@
 		return Math.sqrt(dx * dx + dy * dy);
 	}
 
-	function calculatePanning(node, centerX) {
+	function calculatePanning(node, centerX, distance, maxDistance) {
 		const maxPan = 0.8; // Maximum panning effect
-		const relativeX = (node.position.x - centerX) / (window.innerWidth / 2);
-		return Math.max(-maxPan, Math.min(maxPan, relativeX));
+		const relativeX = (node.position.x - centerX) / (window.innerWidth / (2 * scene.scale));
+		
+		// Increase this value to extend the area of minimal panning
+		const panStartDistance = maxDistance * 0.5; // 50% of max distance
+		
+		// Calculate panning factor based on distance
+		let panFactor;
+		if (distance <= panStartDistance) {
+			// Even more minimal panning when close
+			panFactor = 0.05; // Reduced from 0.2 to 0.05
+		} else {
+			// More gradual increase in panning as distance increases
+			panFactor = 0.05 + 0.95 * Math.pow((distance - panStartDistance) / (maxDistance - panStartDistance), 2);
+		}
+		
+		// Apply the panning factor
+		return Math.max(-maxPan, Math.min(maxPan, relativeX * panFactor));
+	}
+
+	function calculateVolume(distance, maxDistance) {
+		const minVolume = 0.01;  // Minimum volume (never completely silent if minVolume > 0)
+		const fullVolumeDistance = maxDistance * 0.4;  // Increased distance at which volume starts to decrease
+		const falloffFactor = 1;  // Increase for a more gradual falloff (higher = more gradual)
+
+		if (distance <= fullVolumeDistance) {
+			// Gradual volume reduction even within fullVolumeDistance
+			return 1 - (0.1 * (distance / fullVolumeDistance));
+		} else {
+			// More gradual fall-off beyond fullVolumeDistance
+			const normalizedDistance = (distance - fullVolumeDistance) / (maxDistance - fullVolumeDistance);
+			return Math.max(minVolume, 0.9 - Math.pow(normalizedDistance, falloffFactor));
+		}
 	}
 
 	// Theme stuff
@@ -455,13 +484,13 @@
 				const distance = calculateDistance(this, centerX, centerY);
 				const maxDistance = Math.sqrt(window.innerWidth * window.innerWidth + window.innerHeight * window.innerHeight) / (2 * scene.scale);
 				
-				// Volume based on distance
-				const volume = Math.max(0, 1 - distance / maxDistance);
-				this.gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+				// Volume calculation
+				const volume = calculateVolume(distance, maxDistance);
+				this.gainNode.gain.setTargetAtTime(volume, audioContext.currentTime, 0.1);
 				
-				// Panning
-				const panning = calculatePanning(this, centerX);
-				this.panNode.pan.setValueAtTime(panning, audioContext.currentTime);
+				// Panning calculation
+				const panning = calculatePanning(this, centerX, distance, maxDistance);
+				this.panNode.pan.setTargetAtTime(panning, audioContext.currentTime, 0.1);
 			}
 		}
 		
