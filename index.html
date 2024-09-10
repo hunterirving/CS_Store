@@ -334,24 +334,20 @@
 				this.ratio = 5;
 				
 				p.contentEditable = "true";
-				p.addEventListener("dblclick", (e) => {
+				p.addEventListener("click", (e) => {
 					e.stopPropagation();
 					p.focus();
-					const range = document.createRange();
-					range.selectNodeContents(p);
-					const sel = window.getSelection();
-					sel.removeAllRanges();
-					sel.addRange(range);
-					document.addEventListener("mousedown", e => {
-						this.data.path = p.innerHTML;
-						p.blur();
-					})
+				});
+				p.addEventListener("blur", () => {
+					if (p.innerHTML.trim() === "") {
+						p.innerHTML = "&nbsp;";  // Prevents collapse when empty
+					}
+					this.data.path = p.innerHTML;
 				});
 				p.onkeyup = (e) => {
 					this.data.path = p.innerHTML;
 				}
 				return p;
-				
 			} else if (type === "dir") {
 				const p = document.createElement("p");
 				p.innerHTML = path;
@@ -591,18 +587,24 @@
 			const node = new Node({
 				data: {
 					type: "text",
-					path: "Double-click to edit."
+					path: ""  // Start with an empty string
 				},
 				render: {
 					x: pos.x,
 					y: pos.y,
-					w: 600 / scene.scale,
+					w: 600 / scene.scale,  // Reduced initial width
 					h: 16 / scene.scale,
 					z: 4,
 					creationScale: scene.scale,
 				},
 			});
 			scene.addNode(node);
+			
+			// Focus and make the new node editable
+			setTimeout(() => {
+				node.content.focus();
+				node.content.click();
+			}, 0);
 		}
 	}
 	
