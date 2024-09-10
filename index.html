@@ -398,14 +398,33 @@
 				return img;
 				
 			} else if (type === "audio/mpeg") {
+				const audioContainer = document.createElement("div");
+				audioContainer.style.display = "flex";
+				audioContainer.style.flexDirection = "column";
+				audioContainer.style.justifyContent = "center";
+
 				const audio = document.createElement("audio");
 				audio.style.width = "100%";
 				audio.preload = "auto";
 				audio.controls = true;
-				audio.autoplay = playAudio;
+				audio.autoplay = true;
+				audio.loop = true;
 				audio.src = path;
-				this.ratio = 5;
-				return audio
+
+				const label = document.createElement("div");
+				label.textContent = path.split('/').pop(); // Display filename
+				label.style.textAlign = "center";
+				label.style.padding = "5px";
+				label.style.overflow = "hidden";
+				label.style.textOverflow = "ellipsis";
+				label.style.whiteSpace = "nowrap";
+				label.style.fontSize = "0.8em";
+
+				audioContainer.appendChild(audio);
+				audioContainer.appendChild(label);
+
+				this.ratio = 3;
+				return audioContainer;
 				
 			} else if (type === "video/mp4") {
 				const video = document.createElement("video");
@@ -575,15 +594,15 @@
 		mousedown(e) {
 			e.preventDefault();
 			e.stopPropagation();
-			
+
 			if (e.altKey) {
 				scene.removeNode(this);
 				return;
 			}
-			
+
 			this.dragging = true;
 			this.click = new Vec({x: e.clientX, y: e.clientY});
-			
+
 			if (this.inStage) {
 				// Position on scene
 				const rect = this.elem.getBoundingClientRect();
@@ -591,7 +610,7 @@
 					x: e.clientX - rect.left,
 					y: e.clientY - rect.top,
 				})
-				
+
 				// Create a new copy
 				const sizes = this.ratio > 1 ? {
 					w: 200 / scene.scale,
@@ -600,7 +619,7 @@
 					w: this.ratio * 200 / scene.scale,
 					h: (200 / scene.scale),
 				};
-				
+
 				const copy = new this.constructor({
 					render: {
 						x: null,
@@ -613,16 +632,15 @@
 				});
 				copy.position = scene.toAbsolute(this.click.sub(pos));
 				scene.addNode(copy);
-				
+
 				// Continue moving the copy
-				copy.elem.dispatchEvent(new Event('mousedown'));
+				copy.elem.dispatchEvent(new MouseEvent('mousedown', e));
 				this.dragging = false;
-				
+
 			} else {
 				if (e.shiftKey) {
 					scene.removeNode(this);
 					this.elem.remove();
-					
 				} else {
 					this.depth = 4;
 					this.render();
@@ -742,22 +760,6 @@
 			for (const child of this.children) {
 				child.depth = 1;
 				child.render();
-				
-				if (playAudio && child.type.split("/")[0] == "audio") {
-					const pos = scene.toViewport(child.position);
-					const childWidth = parseInt(child.elem.style.width.slice(0, -2));
-					const childHeight = parseInt(child.elem.style.height.slice(0, -2));
-					if (
-					pos.x + childWidth > 0 &&
-					pos.x < width &&
-					pos.y + childHeight > 0 &&
-					pos.y < height
-					) {
-						child.content.play()
-					} else {
-						child.content.pause();
-					}
-				}
 			}
 		}
 		
@@ -844,7 +846,6 @@
 		}
 	}
 	
-	let playAudio = false;
 	const scene = new Scene(document.getElementById("scene"));
 	const stage = new Stage(document.getElementById("stage"));
 	
@@ -898,33 +899,6 @@
 		}
 		document.body.appendChild(p);
 		
-		// Enable audio button
-		const btn = document.createElement("button");
-		btn.setAttribute("id", "audio");
-		btn.onclick = () => { 
-			if (playAudio) {
-				playAudio = false;
-				for (const child of scene.children) {
-					if (child.data.type === "audio/mpeg" ) {
-						child.content.pause();
-					}
-				}
-			} else {
-				playAudio = true; 
-				for (const child of scene.children) {
-					if (child.data.type === "audio/mpeg" ) {
-						child.content.play();
-					}
-				}
-			}
-		}
-		btn.innerHTML = "Toggle audio";
-		btn.style.zIndex = 5;
-		btn.style.position = "absolute";
-		btn.style.left = 10;
-		btn.style.bottom = 10;
-		document.body.appendChild(btn);
-		
 		// Populate stage with listing
 		files.map(d => {
 			stage.addNode(new Node({
@@ -961,8 +935,6 @@
 					"layout": currentLayout,
 				}));
 				lastSavedLayout = currentLayout;
-			} else {
-				console.log("No changes to save.");
 			}
 			setTimeout(autosave, 1000);
 		}
