@@ -1,74 +1,74 @@
 <style>
-    body {
-        font-family: monospace;
-        font-size: 12px;
-        width: 100%;
-        height: 100%;
-        margin: 0px;
-        overflow-y: hidden;
-        overflow-x: hidden;
-    }
-    #path {
-        background-color: #eee8d5;
-        font-size: 12px;
-        position: absolute;
-        top: 0px;
-        left: 0px;
-        margin: 0px;
-        padding: 6px 10px 6px 10px;
-        border-radius: 3px;
-    }
-    #scene {
-        position: absolute;
-        top: 0px;
-        left: 0px;
-        width: 100%;
-        height: 100%;
-        background-size: 30px 30px;
-        background: conic-gradient(from 90deg at 1px 1px, #fdf6e3 90deg, #eee8d5 0deg);
-        background-position: 0px 0px;
-        background-size: 100px 100px;
-    }
-    #stage {
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        width: 150px;
-        height: 95vh;
-        overflow-x: hidden;
-        border: 1px solid;
-        border-radius: 3px;
-        z-index: 2;
-        background-color: #eee8d5;
-    }
-    .nodeInStage {
-        position: relative;
-        margin: 10px 15px;
-        z-index: 3;
-        cursor: grab;
-    }
-    .nodeInScene {
-        position: absolute;
-        cursor: move;
-    }
-    .textNode {
-        margin: 0px;
-        border-radius: 5px;
-        background-color: #eee8d5;
-
-        box-shadow: none;
-        outline-style: none;
-        border-color: transparent;
-        overflow-wrap: break-word;
-    }
-    .dirNode {
-        margin: 0px;
-        border-radius: 5px;
-        background-color: #eee8e7;
-
-        text-align: center;
-        word-break: break-all;
-    }
+	body {
+		font-family: monospace;
+		font-size: 12px;
+		width: 100%;
+		height: 100%;
+		margin: 0px;
+		overflow-y: hidden;
+		overflow-x: hidden;
+	}
+	#path {
+		background-color: #eee8d5;
+		font-size: 12px;
+		position: absolute;
+		top: 0px;
+		left: 0px;
+		margin: 0px;
+		padding: 6px 10px 6px 10px;
+		border-radius: 3px;
+	}
+	#scene {
+		position: absolute;
+		top: 0px;
+		left: 0px;
+		width: 100%;
+		height: 100%;
+		background-size: 30px 30px;
+		background: conic-gradient(from 90deg at 1px 1px, #fdf6e3 90deg, #eee8d5 0deg);
+		background-position: 0px 0px;
+		background-size: 100px 100px;
+	}
+	#stage {
+		position: absolute;
+		top: 20px;
+		right: 20px;
+		width: 150px;
+		height: 95vh;
+		overflow-x: hidden;
+		border: 1px solid;
+		border-radius: 3px;
+		z-index: 2;
+		background-color: #eee8d5;
+	}
+	.nodeInStage {
+		position: relative;
+		margin: 10px 15px;
+		z-index: 3;
+		cursor: grab;
+	}
+	.nodeInScene {
+		position: absolute;
+		cursor: move;
+	}
+	.textNode {
+		margin: 0px;
+		border-radius: 5px;
+		background-color: #eee8d5;
+		
+		box-shadow: none;
+		outline-style: none;
+		border-color: transparent;
+		overflow-wrap: break-word;
+	}
+	.dirNode {
+		margin: 0px;
+		border-radius: 5px;
+		background-color: #eee8e7;
+		
+		text-align: center;
+		word-break: break-all;
+	}
 </style>
 
 <div id="scene"></div>
@@ -77,679 +77,689 @@
 <script src="/static/deps/pdf.js"></script>
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
-
-const clamp = (x, min, max) =>
-  Math.min(Math.max(x, min), max)
-
-const round = (x, n=0) => 10**(-n) * Math.round(x * 10**n);
-
-class Vec {
-  constructor({x, y, z=0}) {
-    this.x = x;
-    this.y = y;
-    this.z = z;
-  }
-  add(other) {
-    return new Vec({
-      x: this.x + other.x,
-      y: this.y + other.y,
-      z: this.z + other.z
-    });
-  }
-  times(c) {
-    return new Vec({
-      x: c * this.x,
-      y: c * this.y,
-      z: c * this.z
-    });
-  }
-  sub(other) {
-    return this.add(other.times(-1));
-  }
-  dot(other) {
-    return this.x * other.x
-         + this.y * other.y
-         + this.z * other.z;
-  }
-  mod(n) {
-    return new Vec({
-      x: this.x % n,
-      y: this.y % n,
-      z: this.z % n,
-    })
-  }
-  abs() {
-    return new Vec({
-      x: Math.abs(this.x),
-      y: Math.abs(this.y),
-      z: Math.abs(this.z),
-    })
-  }
-}
-
-class Node {
-  constructor({ render, data }) {
-    const { 
-      x, y, z, w = null, h = null, creationScale,
-    } = render;
-
-    this.data = data;
-    this.type = data.type;
-    this.path = data.path;
-    this.inStage = false;
-    this.elem = document.createElement("div");
-
-    // Depths:
-    // 0: scene
-    // 1: items in scene
-    // 2: stage
-    // 3: items in stage
-    // 4: item in focus
-
-    // Positioning and rendering
-    this.position = new Vec({x, y});
-    this.depth = z;
-    this.width = w;
-    this.height = h;
-    this.ratio = w / h;
-    this.creationScale = creationScale;
-    this.padding = 8 / creationScale;
-    this.fontSize = 14 / creationScale;
-    this.borderRadius = 5 / creationScale;
-
-    // Populate div and set ratio
-    this.content = this.populateContent(data);
-    this.elem.appendChild(this.content);
-
-    // Interaction helpers
-    this.dragging = false;
-    this.click = null;
-
-    this.boundMouseMove = (e) => this.mousemove(e);
-    this.boundMouseUp = (e) => this.mouseup(e);
-
-    this.elem.addEventListener("mousedown", (e) => {
-      document.addEventListener('mousemove', this.boundMouseMove);
-      document.addEventListener('mouseup', this.boundMouseUp);
-      this.mousedown(e)
-    });
-  }
-
-  serialize() {
-    let render = {
-      x: this.position.x,
-      y: this.position.y,
-      z: this.depth,
-      h: this.height,
-      w: this.width,
-      creationScale: this.creationScale,
-    }
-    for (const key of Object.keys(render)) {
-      render[key] = round(render[key], 2);
-    }
-    return {
-      data: this.data,
-      render: render,
-    }
-  }
-
-  render() {
-    const pos = scene.toViewport(this.position);
-    this.elem.style.left = pos.x;
-    this.elem.style.top = pos.y;
-    this.elem.style.zIndex = this.depth;
-    this.elem.style.width = (this.width * scene.scale) + "px";
-    this.elem.style.height = (this.height * scene.scale) + "px";
-
-    this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
-    this.content.style.padding = (this.padding * scene.scale) + "px";
-    this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
-  }
-
-  populateContent(data) {
-    let {type, path} = data;
-
-    if (type === "image/jpeg" || type === "image/png") {
-      const img = document.createElement("img");
-      img.style.width = "100%";
-      img.onload = () => {
-        this.ratio = img.width / img.height;
-      }
-      img.src = path;
-      return img;
-
-    } else if (type === "audio/mpeg") {
-      const audio = document.createElement("audio");
-      audio.style.width = "100%";
-      audio.preload = "auto";
-      audio.controls = true;
-      audio.autoplay = playAudio;
-      audio.src = path;
-      this.ratio = 5;
-      return audio
-
-    } else if (type === "video/mp4") {
-      const video = document.createElement("video");
-      video.controls = true;
-      video.style.width = "100%";
-      video.onload = () => {
-        this.ratio = img.width / img.height;
-      }
-      video.src = path;
-      return video;
-
-    } else if (type === "application/pdf") {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-
-      canvas.style.width = "100%";
-
-      (async () => {
-        const pdf = await pdfjsLib.getDocument(path).promise;
-
-        const renderPage = async (n) => {
-          const page = await pdf.getPage(n);
-
-          const scale = 1000 / page.getViewport({scale: 1}).width;
-          const viewport = page.getViewport({scale});
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-
-          await page.render({
-            canvasContext: ctx,
-            viewport: viewport
-          });
-        }
-
-        // Hack: when we first create a PDF, i.e. in stage, page is not defined
-        // yet so we render some buttons for page selection.  When we clone to
-        // add to the stage, the property is set, so the buttons dissappear.
-
-        if (this.data.page === undefined) {
-          this.data.page = 1;
-
-          const center = document.createElement("center");
-          center.style.marginTop = "5px";
-
-          const pageLabel = document.createElement("span");
-          pageLabel.style.padding = "10px";
-          pageLabel.innerHTML = this.data.page;
-
-          const previous = document.createElement("button");
-          previous.style.border = "solid 1px darkgrey";
-          previous.style.outline = "none";
-          previous.style.borderRadius = "5px";
-          previous.style.backgroundColor = "#eee8e7";
-          previous.style.height = "20px";
-          previous.style.width = "30px";
-
-          previous.innerHTML = "<";
-          previous.addEventListener("mousedown", e => {
-            e.stopPropagation();
-            this.data.page = this.data.page - 1;
-            if (this.data.page < 1) {
-              this.data.page = pdf.numPages;
-            }
-            pageLabel.innerHTML = this.data.page;
-            renderPage(this.data.page);
-          });
-
-          const next = document.createElement("button");
-          next.style.border = "solid 1px darkgrey";
-          next.style.outline = "none";
-          next.style.borderRadius = "5px";
-          next.style.backgroundColor = "#eee8e7";
-          next.style.height = "20px";
-          next.style.width = "30px";
-
-          next.innerHTML = ">";
-          next.addEventListener("mousedown", e => {
-            e.stopPropagation();
-            this.data.page = this.data.page + 1;
-            if (this.data.page > pdf.numPages) {
-              this.data.page = 1;
-            }
-            pageLabel.innerHTML = this.data.page;
-            renderPage(this.data.page);
-          });
-
-          center.appendChild(previous);
-          center.appendChild(pageLabel);
-          center.appendChild(next);
-          this.elem.appendChild(center);
-        }
-
-        renderPage(this.data.page);
-      })()
-
-      this.ratio = 1 / 1.29;
-      this.height = this.width / this.ratio;
-      return canvas;
-
-    } else if (type === "text") {
-      const p = document.createElement("p");
-      p.innerHTML = path;
-      p.classList.add("textNode");
-      this.ratio = 5;
-
-      p.contentEditable = "true";
-      p.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        p.focus();
-        const range = document.createRange();
-        range.selectNodeContents(p);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        document.addEventListener("mousedown", e => {
-          this.data.path = p.innerHTML;
-          p.blur();
-        })
-      });
-      p.onkeyup = (e) => {
-        this.data.path = p.innerHTML;
-      }
-      return p;
-
-    } else if (type === "dir") {
-      const p = document.createElement("p");
-      p.innerHTML = path;
-      p.classList.add("dirNode");
-      this.ratio = 10.0;
-
-      p.ondblclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        ws.send(JSON.stringify({
-          "type": "cd",
-          "path": data.absolute,
-        }));
-      }
-
-      return p
-    }
-  }
-
-  getViewportPosition() {
-    return new Vec({
-      x: parseInt(this.elem.style.left.slice(0, -2)),
-      y: parseInt(this.elem.style.top.slice(0, -2)),
-    })
-  }
-
-  setViewportPosition(v) {
-    this.elem.style.left = v.x;
-    this.elem.style.top = v.y;
-    this.position = scene.toAbsolute(v);
-  }
-
-  moveInViewport(delta) {
-    const pos = this.getViewportPosition();
-    this.setViewportPosition(pos.add(delta));
-  }
-
-  mousedown(e) {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (e.altKey) {
-      scene.removeNode(this);
-      return;
-    }
-
-    this.dragging = true;
-    this.click = new Vec({x: e.clientX, y: e.clientY});
-
-    if (this.inStage) {
-      // Position on scene
-      const rect = this.elem.getBoundingClientRect();
-      const pos = new Vec({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      })
-
-      // Create a new copy
-      const sizes = this.ratio > 1 ? {
-        w: 200 / scene.scale,
-        h: 200 / scene.scale / this.ratio,
-      } : {
-        w: this.ratio * 200 / scene.scale,
-        h: (200 / scene.scale),
-      };
-
-      const copy = new this.constructor({
-        render: {
-          x: null,
-          y: null,
-          z: 4,
-          ...sizes,
-          creationScale: scene.scale,
-        },
-        data: this.data,
-      });
-      copy.position = scene.toAbsolute(this.click.sub(pos));
-      scene.addNode(copy);
-
-      // Continue moving the copy
-      copy.elem.dispatchEvent(new Event('mousedown'));
-      this.dragging = false;
-
-    } else {
-      if (e.shiftKey) {
-        scene.removeNode(this);
-        this.elem.remove();
-
-      } else {
-        this.depth = 4;
-        this.render();
-      }
-    }
-  }
-
-  mousemove(e) {
-    if (this.dragging) {
-      const click = new Vec({x: e.clientX, y: e.clientY});
-      const delta = click.sub(this.click);
-      this.moveInViewport(delta);
-      this.click = click;
-    }
-  }
-
-  mouseup(e) {
-    if (this.dragging) {
-      this.dragging = false;
-      this.render();
-      this.depth = 1;
-    }
-    document.removeEventListener('mousemove', this.boundMouseMove);
-    document.removeEventListener('mouseup', this.boundMouseUp);
-  }
-}
-
-class Scene {
-  constructor(elem) {
-    this.elem = elem;
-    this.origin = new Vec({x: 0, y: 0});
-    this.scale = 1;
-    this.children = [];
-
-    this.elem.addEventListener("wheel", (e) => this.wheel(e));
-    this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
-    this.elem.addEventListener("gesturechange", (e) => this.gesturechange(e));
-    this.elem.addEventListener("gestureend", (e) => e.preventDefault());
-    this.elem.addEventListener("mousedown", (e) => e.preventDefault());
-    this.elem.addEventListener("mousemove", (e) => e.preventDefault());
-    this.elem.addEventListener("mouseup", (e) => e.preventDefault());
-    this.elem.addEventListener("dblclick", (e) => this.dblclick(e));
-  }
-
-  serialize() {
-    return {
-      x: round(this.origin.x, 2),
-      y: round(this.origin.y, 2),
-      scale: round(this.scale, 2),
-      children: this.children.map(c => c.serialize()),
-    }
-  }
-
-  toViewport(x) {
-    return x.sub(this.origin).times(this.scale);
-  }
-
-  toAbsolute(x) {
-    return x.times(1/this.scale).add(this.origin);
-  }
-
-  addNode(node) {
-    node.elem.classList.add("nodeInScene");
-    this.elem.appendChild(node.elem);
-    this.children.push(node);
-    node.render();
-  }
-
-  removeNode(node) {
-    node.elem.classList.remove("nodeInScene");
-    this.elem.removeChild(node.elem);
-    const idx = this.children.indexOf(node);
-    this.children.splice(idx, 1);
-  }
-
-  render() {
-    const size = 200 * this.scale;
-    const pos = this.origin.abs().times(this.scale);
-    this.elem.style.backgroundSize = `${size}px ${size}px`;
-    this.elem.style.backgroundPosition = `${-pos.x} ${-pos.y}`;
-    this.children.map(c => c.render());
-  }
-
-  wheel(e) {
-    // dev.to/danburzo/pinch-me-i-m-zooming-gestures-in-the-dom-a0e
-    e.preventDefault();
-
-    if (e.ctrlKey) {
-      const pointer = new Vec({x: e.clientX, y: e.clientY});
-      const a = this.toAbsolute(pointer);
-
-      this.scale = clamp(this.scale - 0.01 * e.deltaY, 0.1, 3.0);
-
-      // Re-position so mouse remains where it was
-      const b = this.toAbsolute(pointer);
-      const delta = b.sub(a);
-      this.origin = this.origin.sub(delta);
-      this.render();
-
-    } else {
-      const delta = new Vec({x: e.deltaX, y: e.deltaY}).times(1 / this.scale);
-      this.origin = this.origin.add(delta);
-      this.render();
-    }
-
-    const {width, height} = this.elem.getBoundingClientRect();
-    for (const child of this.children) {
-      child.depth = 1;
-      child.render();
-
-      if (playAudio && child.type.split("/")[0] == "audio") {
-        const pos = scene.toViewport(child.position);
-        const childWidth = parseInt(child.elem.style.width.slice(0, -2));
-        const childHeight = parseInt(child.elem.style.height.slice(0, -2));
-        if (
-          pos.x + childWidth > 0 &&
-          pos.x < width &&
-          pos.y + childHeight > 0 &&
-          pos.y < height
-        ) {
-          child.content.play()
-        } else {
-          child.content.pause();
-        }
-      }
-    }
-  }
-
-  gesturechange(e) {
-    e.preventDefault();
-    const pointer = new Vec({x: e.clientX, y: e.clientY});
-    const a = this.toAbsolute(pointer);
-
-    // Resize the canvas
-    const factor = 1 + 0.2 * (e.scale - 1);
-    this.scale = clamp(this.scale * factor, 0.1, 3.0);
-
-    // Re-position so mouse remains where it was
-    const b = this.toAbsolute(pointer);
-    const delta = b.sub(a);
-    this.origin = this.origin.sub(delta);
-    this.render();
-  }
-
-  dblclick(e) {
-    const click = new Vec({x: e.clientX - 10, y: e.clientY - 10});
-    const pos = scene.toAbsolute(click);
-
-    const node = new Node({
-      data: {
-        type: "text",
-        path: "Double-click to edit."
-      },
-      render: {
-        x: pos.x,
-        y: pos.y,
-        w: 220 / scene.scale,
-        h: 16 / scene.scale,
-        z: 4,
-        creationScale: scene.scale,
-      },
-    });
-    scene.addNode(node);
-  }
-}
-
-class Stage {
-  constructor(elem) {
-    this.elem = elem;
-    this.children = [];
-  }
-
-  addNode(node) {
-    node.inStage = true;
-    node.elem.classList.add("nodeInStage");
-    this.elem.appendChild(node.elem);
-    this.children.push(node);
-  }
-
-  removeNode(node) {
-    node.inStage = false;
-    node.elem.classList.remove("nodeInStage");
-    this.elem.removeChild(node.elem);
-    const idx = this.children.indexOf(node);
-    this.children.splice(idx, 1);
-  }
-
-  inStage(v) {
-    const bbox = this.elem.getBoundingClientRect();
-    return (
-      bbox.left < v.x &&
-      v.x < bbox.right &&
-      bbox.top < v.y &&
-      v.y < bbox.bottom
-    );
-  }
-}
-</script>
-
-<script>
-let playAudio = false;
-const scene = new Scene(document.getElementById("scene"));
-const stage = new Stage(document.getElementById("stage"));
-
-const resetCanvas = () => {
-    for (const child of scene.children) {
-      scene.elem.removeChild(child.elem);
-      scene.children = [];
-    }
-    for (const child of stage.children) {
-      stage.elem.removeChild(child.elem);
-      stage.children = [];
-    }
-    const title = document.getElementById("path");
-    if (title) title.remove();
-
-    const audio = document.getElementById("audio");
-    if (audio) audio.remove();
-}
-
-let ws = new WebSocket("ws://localhost:1234/ws");
-ws.onmessage = e => {
-    resetCanvas();
-    const {files, layout, path} = JSON.parse(e.data);
-
-    // Create title
-    const p = document.createElement("p");
-    p.setAttribute("id", "path");
-    p.innerHTML = `CS_Store > ${path}`;
-    p.style.zIndex = 5;
-    p.classList.add("textNode");
-    p.contentEditable = "true";
-    p.onclick = () => {
-      p.focus();
-      p.innerHTML = path;
-      const range = document.createRange();
-      range.selectNodeContents(p);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-    p.onkeypress = (e) => {
-      if (e.key === "Enter") {
-        p.blur();
-        ws.send(JSON.stringify({
-          "type": "cd",
-          "path": p.innerHTML,
-        }));
-      }
-    }
-    document.body.appendChild(p);
-    
-    // Enable audio button
-    const btn = document.createElement("button");
-    btn.setAttribute("id", "audio");
-    btn.onclick = () => { 
-        if (playAudio) {
-            playAudio = false;
-            for (const child of scene.children) {
-                if (child.data.type === "audio/mpeg" ) {
-                    child.content.pause();
-                }
-            }
-        } else {
-            playAudio = true; 
-            for (const child of scene.children) {
-                if (child.data.type === "audio/mpeg" ) {
-                    child.content.play();
-                }
-            }
-        }
-    }
-    btn.innerHTML = "Toggle audio";
-    btn.style.zIndex = 5;
-    btn.style.position = "absolute";
-    btn.style.left = 10;
-    btn.style.bottom = 10;
-    document.body.appendChild(btn);
-
-    // Populate stage with listing
-    files.map(d => {
-        stage.addNode(new Node({
-            data: d,
-            render: { x: 0, y: 0, z: 4, },
-        }));
-    })
-
-    // Populate scene with layout
-    if (Object.keys(layout).length > 0) {
-        scene.origin = new Vec({
-            x: layout.x,
-            y: layout.y,
-        });
-        scene.scale = layout.scale;
-        for (const child of layout.children) {
-            scene.addNode(new Node(child))
-        }
-        scene.render();
-    }
-}
-ws.onopen = e => {
-    ws.send(JSON.stringify({"type": "initialize"}));
-
-    const autosave = () => {
-        ws.send(JSON.stringify({
-            "type": "layout",
-            "layout": scene.serialize(),
-        }));
-        setTimeout(autosave, 1000);
-    }
-    autosave();
-}
+	pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
+	
+	const clamp = (x, min, max) =>
+	Math.min(Math.max(x, min), max)
+	
+	const round = (x, n=0) => 10**(-n) * Math.round(x * 10**n);
+	
+	class Vec {
+		constructor({x, y, z=0}) {
+			this.x = x;
+			this.y = y;
+			this.z = z;
+		}
+		add(other) {
+			return new Vec({
+				x: this.x + other.x,
+				y: this.y + other.y,
+				z: this.z + other.z
+			});
+		}
+		times(c) {
+			return new Vec({
+				x: c * this.x,
+				y: c * this.y,
+				z: c * this.z
+			});
+		}
+		sub(other) {
+			return this.add(other.times(-1));
+		}
+		dot(other) {
+			return this.x * other.x
+			+ this.y * other.y
+			+ this.z * other.z;
+		}
+		mod(n) {
+			return new Vec({
+				x: this.x % n,
+				y: this.y % n,
+				z: this.z % n,
+			})
+		}
+		abs() {
+			return new Vec({
+				x: Math.abs(this.x),
+				y: Math.abs(this.y),
+				z: Math.abs(this.z),
+			})
+		}
+	}
+	
+	class Node {
+		constructor({ render, data }) {
+			const { 
+				x, y, z, w = null, h = null, creationScale,
+			} = render;
+			
+			this.data = data;
+			this.type = data.type;
+			this.path = data.path;
+			this.inStage = false;
+			this.elem = document.createElement("div");
+			
+			// Depths:
+			// 0: scene
+			// 1: items in scene
+			// 2: stage
+			// 3: items in stage
+			// 4: item in focus
+			
+			// Positioning and rendering
+			this.position = new Vec({x, y});
+			this.depth = z;
+			this.width = w;
+			this.height = h;
+			this.ratio = w / h;
+			this.creationScale = creationScale;
+			this.padding = 8 / creationScale;
+			this.fontSize = 14 / creationScale;
+			this.borderRadius = 5 / creationScale;
+			
+			// Populate div and set ratio
+			this.content = this.populateContent(data);
+			this.elem.appendChild(this.content);
+			
+			// Interaction helpers
+			this.dragging = false;
+			this.click = null;
+			
+			this.boundMouseMove = (e) => this.mousemove(e);
+			this.boundMouseUp = (e) => this.mouseup(e);
+			
+			this.elem.addEventListener("mousedown", (e) => {
+				document.addEventListener('mousemove', this.boundMouseMove);
+				document.addEventListener('mouseup', this.boundMouseUp);
+				this.mousedown(e)
+			});
+		}
+		
+		serialize() {
+			let render = {
+				x: this.position.x,
+				y: this.position.y,
+				z: this.depth,
+				h: this.height,
+				w: this.width,
+				creationScale: this.creationScale,
+			}
+			for (const key of Object.keys(render)) {
+				render[key] = round(render[key], 2);
+			}
+			return {
+				data: this.data,
+				render: render,
+			}
+		}
+		
+		render() {
+			const pos = scene.toViewport(this.position);
+			this.elem.style.left = pos.x;
+			this.elem.style.top = pos.y;
+			this.elem.style.zIndex = this.depth;
+			this.elem.style.width = (this.width * scene.scale) + "px";
+			this.elem.style.height = (this.height * scene.scale) + "px";
+			
+			this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
+			this.content.style.padding = (this.padding * scene.scale) + "px";
+			this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+		}
+		
+		populateContent(data) {
+			let {type, path} = data;
+			
+			if (type === "image/jpeg" || type === "image/png") {
+				const img = document.createElement("img");
+				img.style.width = "100%";
+				img.onload = () => {
+					this.ratio = img.width / img.height;
+				}
+				img.src = path;
+				return img;
+				
+			} else if (type === "audio/mpeg") {
+				const audio = document.createElement("audio");
+				audio.style.width = "100%";
+				audio.preload = "auto";
+				audio.controls = true;
+				audio.autoplay = playAudio;
+				audio.src = path;
+				this.ratio = 5;
+				return audio
+				
+			} else if (type === "video/mp4") {
+				const video = document.createElement("video");
+				video.controls = true;
+				video.style.width = "100%";
+				video.onload = () => {
+					this.ratio = img.width / img.height;
+				}
+				video.src = path;
+				return video;
+				
+			} else if (type === "application/pdf") {
+				const canvas = document.createElement("canvas");
+				const ctx = canvas.getContext("2d");
+				
+				canvas.style.width = "100%";
+				
+				(async () => {
+					const pdf = await pdfjsLib.getDocument(path).promise;
+					
+					const renderPage = async (n) => {
+						const page = await pdf.getPage(n);
+						
+						const scale = 1000 / page.getViewport({scale: 1}).width;
+						const viewport = page.getViewport({scale});
+						canvas.height = viewport.height;
+						canvas.width = viewport.width;
+						
+						await page.render({
+							canvasContext: ctx,
+							viewport: viewport
+						});
+					}
+					
+					// Hack: when we first create a PDF, i.e. in stage, page is not defined
+					// yet so we render some buttons for page selection.  When we clone to
+					// add to the stage, the property is set, so the buttons dissappear.
+					
+					if (this.data.page === undefined) {
+						this.data.page = 1;
+						
+						const center = document.createElement("center");
+						center.style.marginTop = "5px";
+						
+						const pageLabel = document.createElement("span");
+						pageLabel.style.padding = "10px";
+						pageLabel.innerHTML = this.data.page;
+						
+						const previous = document.createElement("button");
+						previous.style.border = "solid 1px darkgrey";
+						previous.style.outline = "none";
+						previous.style.borderRadius = "5px";
+						previous.style.backgroundColor = "#eee8e7";
+						previous.style.height = "20px";
+						previous.style.width = "30px";
+						
+						previous.innerHTML = "<";
+						previous.addEventListener("mousedown", e => {
+							e.stopPropagation();
+							this.data.page = this.data.page - 1;
+							if (this.data.page < 1) {
+								this.data.page = pdf.numPages;
+							}
+							pageLabel.innerHTML = this.data.page;
+							renderPage(this.data.page);
+						});
+						
+						const next = document.createElement("button");
+						next.style.border = "solid 1px darkgrey";
+						next.style.outline = "none";
+						next.style.borderRadius = "5px";
+						next.style.backgroundColor = "#eee8e7";
+						next.style.height = "20px";
+						next.style.width = "30px";
+						
+						next.innerHTML = ">";
+						next.addEventListener("mousedown", e => {
+							e.stopPropagation();
+							this.data.page = this.data.page + 1;
+							if (this.data.page > pdf.numPages) {
+								this.data.page = 1;
+							}
+							pageLabel.innerHTML = this.data.page;
+							renderPage(this.data.page);
+						});
+						
+						center.appendChild(previous);
+						center.appendChild(pageLabel);
+						center.appendChild(next);
+						this.elem.appendChild(center);
+					}
+					
+					renderPage(this.data.page);
+				})()
+				
+				this.ratio = 1 / 1.29;
+				this.height = this.width / this.ratio;
+				return canvas;
+				
+			} else if (type === "text") {
+				const p = document.createElement("p");
+				p.innerHTML = path;
+				p.classList.add("textNode");
+				this.ratio = 5;
+				
+				p.contentEditable = "true";
+				p.addEventListener("dblclick", (e) => {
+					e.stopPropagation();
+					p.focus();
+					const range = document.createRange();
+					range.selectNodeContents(p);
+					const sel = window.getSelection();
+					sel.removeAllRanges();
+					sel.addRange(range);
+					document.addEventListener("mousedown", e => {
+						this.data.path = p.innerHTML;
+						p.blur();
+					})
+				});
+				p.onkeyup = (e) => {
+					this.data.path = p.innerHTML;
+				}
+				return p;
+				
+			} else if (type === "dir") {
+				const p = document.createElement("p");
+				p.innerHTML = path;
+				p.classList.add("dirNode");
+				this.ratio = 10.0;
+				
+				p.ondblclick = (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					ws.send(JSON.stringify({
+						"type": "cd",
+						"path": data.absolute,
+					}));
+				}
+				
+				return p
+			}
+		}
+		
+		getViewportPosition() {
+			return new Vec({
+				x: parseInt(this.elem.style.left.slice(0, -2)),
+				y: parseInt(this.elem.style.top.slice(0, -2)),
+			})
+		}
+		
+		setViewportPosition(v) {
+			this.elem.style.left = v.x;
+			this.elem.style.top = v.y;
+			this.position = scene.toAbsolute(v);
+		}
+		
+		moveInViewport(delta) {
+			const pos = this.getViewportPosition();
+			this.setViewportPosition(pos.add(delta));
+		}
+		
+		mousedown(e) {
+			e.preventDefault();
+			e.stopPropagation();
+			
+			if (e.altKey) {
+				scene.removeNode(this);
+				return;
+			}
+			
+			this.dragging = true;
+			this.click = new Vec({x: e.clientX, y: e.clientY});
+			
+			if (this.inStage) {
+				// Position on scene
+				const rect = this.elem.getBoundingClientRect();
+				const pos = new Vec({
+					x: e.clientX - rect.left,
+					y: e.clientY - rect.top,
+				})
+				
+				// Create a new copy
+				const sizes = this.ratio > 1 ? {
+					w: 200 / scene.scale,
+					h: 200 / scene.scale / this.ratio,
+				} : {
+					w: this.ratio * 200 / scene.scale,
+					h: (200 / scene.scale),
+				};
+				
+				const copy = new this.constructor({
+					render: {
+						x: null,
+						y: null,
+						z: 4,
+						...sizes,
+						creationScale: scene.scale,
+					},
+					data: this.data,
+				});
+				copy.position = scene.toAbsolute(this.click.sub(pos));
+				scene.addNode(copy);
+				
+				// Continue moving the copy
+				copy.elem.dispatchEvent(new Event('mousedown'));
+				this.dragging = false;
+				
+			} else {
+				if (e.shiftKey) {
+					scene.removeNode(this);
+					this.elem.remove();
+					
+				} else {
+					this.depth = 4;
+					this.render();
+				}
+			}
+		}
+		
+		mousemove(e) {
+			if (this.dragging) {
+				const click = new Vec({x: e.clientX, y: e.clientY});
+				const delta = click.sub(this.click);
+				this.moveInViewport(delta);
+				this.click = click;
+			}
+		}
+		
+		mouseup(e) {
+			if (this.dragging) {
+				this.dragging = false;
+				this.render();
+				this.depth = 1;
+			}
+			document.removeEventListener('mousemove', this.boundMouseMove);
+			document.removeEventListener('mouseup', this.boundMouseUp);
+		}
+	}
+	
+	class Scene {
+		constructor(elem) {
+			this.elem = elem;
+			this.origin = new Vec({x: 0, y: 0});
+			this.scale = 1;
+			this.children = [];
+			
+			this.elem.addEventListener("wheel", (e) => this.wheel(e));
+			this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
+			this.elem.addEventListener("gesturechange", (e) => this.gesturechange(e));
+			this.elem.addEventListener("gestureend", (e) => e.preventDefault());
+			this.elem.addEventListener("mousedown", (e) => e.preventDefault());
+			this.elem.addEventListener("mousemove", (e) => e.preventDefault());
+			this.elem.addEventListener("mouseup", (e) => e.preventDefault());
+			this.elem.addEventListener("dblclick", (e) => this.dblclick(e));
+		}
+		
+		serialize() {
+			return {
+				x: round(this.origin.x, 2),
+				y: round(this.origin.y, 2),
+				scale: round(this.scale, 2),
+				children: this.children.map(c => c.serialize()),
+			}
+		}
+		
+		toViewport(x) {
+			return x.sub(this.origin).times(this.scale);
+		}
+		
+		toAbsolute(x) {
+			return x.times(1/this.scale).add(this.origin);
+		}
+		
+		addNode(node) {
+			node.elem.classList.add("nodeInScene");
+			this.elem.appendChild(node.elem);
+			this.children.push(node);
+			node.render();
+		}
+		
+		removeNode(node) {
+			node.elem.classList.remove("nodeInScene");
+			this.elem.removeChild(node.elem);
+			const idx = this.children.indexOf(node);
+			this.children.splice(idx, 1);
+		}
+		
+		render() {
+			const size = 200 * this.scale;
+			const pos = this.origin.abs().times(this.scale);
+			this.elem.style.backgroundSize = `${size}px ${size}px`;
+			this.elem.style.backgroundPosition = `${-pos.x} ${-pos.y}`;
+			this.children.map(c => c.render());
+		}
+		
+		wheel(e) {
+			// dev.to/danburzo/pinch-me-i-m-zooming-gestures-in-the-dom-a0e
+			e.preventDefault();
+			
+			if (e.ctrlKey) {
+				const pointer = new Vec({x: e.clientX, y: e.clientY});
+				const a = this.toAbsolute(pointer);
+				
+				this.scale = clamp(this.scale - 0.01 * e.deltaY, 0.1, 3.0);
+				
+				// Re-position so mouse remains where it was
+				const b = this.toAbsolute(pointer);
+				const delta = b.sub(a);
+				this.origin = this.origin.sub(delta);
+				this.render();
+				
+			} else {
+				const delta = new Vec({x: e.deltaX, y: e.deltaY}).times(1 / this.scale);
+				this.origin = this.origin.add(delta);
+				this.render();
+			}
+			
+			const {width, height} = this.elem.getBoundingClientRect();
+			for (const child of this.children) {
+				child.depth = 1;
+				child.render();
+				
+				if (playAudio && child.type.split("/")[0] == "audio") {
+					const pos = scene.toViewport(child.position);
+					const childWidth = parseInt(child.elem.style.width.slice(0, -2));
+					const childHeight = parseInt(child.elem.style.height.slice(0, -2));
+					if (
+					pos.x + childWidth > 0 &&
+					pos.x < width &&
+					pos.y + childHeight > 0 &&
+					pos.y < height
+					) {
+						child.content.play()
+					} else {
+						child.content.pause();
+					}
+				}
+			}
+		}
+		
+		gesturechange(e) {
+			e.preventDefault();
+			const pointer = new Vec({x: e.clientX, y: e.clientY});
+			const a = this.toAbsolute(pointer);
+			
+			// Resize the canvas
+			const factor = 1 + 0.2 * (e.scale - 1);
+			this.scale = clamp(this.scale * factor, 0.1, 3.0);
+			
+			// Re-position so mouse remains where it was
+			const b = this.toAbsolute(pointer);
+			const delta = b.sub(a);
+			this.origin = this.origin.sub(delta);
+			this.render();
+		}
+		
+		dblclick(e) {
+			const click = new Vec({x: e.clientX - 10, y: e.clientY - 10});
+			const pos = scene.toAbsolute(click);
+			
+			const node = new Node({
+				data: {
+					type: "text",
+					path: "Double-click to edit."
+				},
+				render: {
+					x: pos.x,
+					y: pos.y,
+					w: 220 / scene.scale,
+					h: 16 / scene.scale,
+					z: 4,
+					creationScale: scene.scale,
+				},
+			});
+			scene.addNode(node);
+		}
+	}
+	
+	class Stage {
+		constructor(elem) {
+			this.elem = elem;
+			this.children = [];
+		}
+		
+		addNode(node) {
+			node.inStage = true;
+			node.elem.classList.add("nodeInStage");
+			this.elem.appendChild(node.elem);
+			this.children.push(node);
+		}
+		
+		removeNode(node) {
+			node.inStage = false;
+			node.elem.classList.remove("nodeInStage");
+			this.elem.removeChild(node.elem);
+			const idx = this.children.indexOf(node);
+			this.children.splice(idx, 1);
+		}
+		
+		inStage(v) {
+			const bbox = this.elem.getBoundingClientRect();
+			return (
+			bbox.left < v.x &&
+			v.x < bbox.right &&
+			bbox.top < v.y &&
+			v.y < bbox.bottom
+			);
+		}
+	}
+	
+	let playAudio = false;
+	const scene = new Scene(document.getElementById("scene"));
+	const stage = new Stage(document.getElementById("stage"));
+	
+	const resetCanvas = () => {
+		for (const child of scene.children) {
+			scene.elem.removeChild(child.elem);
+			scene.children = [];
+		}
+		for (const child of stage.children) {
+			stage.elem.removeChild(child.elem);
+			stage.children = [];
+		}
+		const title = document.getElementById("path");
+		if (title) title.remove();
+		
+		const audio = document.getElementById("audio");
+		if (audio) audio.remove();
+	}
+	
+	let lastSavedLayout = null;
+	
+	let ws = new WebSocket("ws://localhost:1234/ws");
+	ws.onmessage = e => {
+		resetCanvas();
+		const {files, layout, path} = JSON.parse(e.data);
+		
+		// Create title
+		const p = document.createElement("p");
+		p.setAttribute("id", "path");
+		p.innerHTML = `CS_Store > ${path}`;
+		p.style.zIndex = 5;
+		p.classList.add("textNode");
+		p.contentEditable = "true";
+		p.onclick = () => {
+			p.focus();
+			p.innerHTML = path;
+			const range = document.createRange();
+			range.selectNodeContents(p);
+			const sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(range);
+		}
+		p.onkeypress = (e) => {
+			if (e.key === "Enter") {
+				p.blur();
+				ws.send(JSON.stringify({
+					"type": "cd",
+					"path": p.innerHTML,
+				}));
+			}
+		}
+		document.body.appendChild(p);
+		
+		// Enable audio button
+		const btn = document.createElement("button");
+		btn.setAttribute("id", "audio");
+		btn.onclick = () => { 
+			if (playAudio) {
+				playAudio = false;
+				for (const child of scene.children) {
+					if (child.data.type === "audio/mpeg" ) {
+						child.content.pause();
+					}
+				}
+			} else {
+				playAudio = true; 
+				for (const child of scene.children) {
+					if (child.data.type === "audio/mpeg" ) {
+						child.content.play();
+					}
+				}
+			}
+		}
+		btn.innerHTML = "Toggle audio";
+		btn.style.zIndex = 5;
+		btn.style.position = "absolute";
+		btn.style.left = 10;
+		btn.style.bottom = 10;
+		document.body.appendChild(btn);
+		
+		// Populate stage with listing
+		files.map(d => {
+			stage.addNode(new Node({
+				data: d,
+				render: { x: 0, y: 0, z: 4, },
+			}));
+		})
+		
+		// Populate scene with layout
+		if (Object.keys(layout).length > 0) {
+			scene.origin = new Vec({
+				x: layout.x,
+				y: layout.y,
+			});
+			scene.scale = layout.scale;
+			for (const child of layout.children) {
+				scene.addNode(new Node(child))
+			}
+			scene.render();
+		}
+		
+		lastSavedLayout = layout;
+	}
+	
+	ws.onopen = e => {
+		ws.send(JSON.stringify({"type": "initialize"}));
+		
+		const autosave = () => {
+			const currentLayout = scene.serialize();
+			if (JSON.stringify(currentLayout) !== JSON.stringify(lastSavedLayout)) {
+				console.log("Saving new layout...");
+				ws.send(JSON.stringify({
+					"type": "layout",
+					"layout": currentLayout,
+				}));
+				lastSavedLayout = currentLayout;
+			} else {
+				console.log("No changes to save.");
+			}
+			setTimeout(autosave, 5000);
+		}
+		setTimeout(autosave, 5000);
+	}
 </script>
