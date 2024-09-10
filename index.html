@@ -329,7 +329,7 @@
 				
 			} else if (type === "text") {
 				const p = document.createElement("p");
-				p.innerHTML = path;
+				p.innerHTML = path || "&nbsp;";
 				p.classList.add("textNode");
 				this.ratio = 5;
 				
@@ -337,6 +337,13 @@
 				p.addEventListener("click", (e) => {
 					e.stopPropagation();
 					p.focus();
+					// Place cursor at the end of the text
+					const range = document.createRange();
+					range.selectNodeContents(p);
+					range.collapse(false);
+					const selection = window.getSelection();
+					selection.removeAllRanges();
+					selection.addRange(range);
 				});
 				p.addEventListener("blur", () => {
 					if (p.innerHTML.trim() === "") {
@@ -478,6 +485,11 @@
 			this.elem.addEventListener("mousemove", (e) => e.preventDefault());
 			this.elem.addEventListener("mouseup", (e) => e.preventDefault());
 			this.elem.addEventListener("dblclick", (e) => this.dblclick(e));
+			this.elem.addEventListener("click", (e) => {
+				if (e.target === this.elem) {
+					document.activeElement.blur();
+				}
+			});
 		}
 		
 		serialize() {
@@ -581,18 +593,20 @@
 		}
 		
 		dblclick(e) {
+			if (e.target !== this.elem) return; // Only create new node if clicking on the background
+
 			const click = new Vec({x: e.clientX - 10, y: e.clientY - 10});
 			const pos = scene.toAbsolute(click);
 			
 			const node = new Node({
 				data: {
 					type: "text",
-					path: ""  // Start with an empty string
+					path: ""
 				},
 				render: {
 					x: pos.x,
 					y: pos.y,
-					w: 600 / scene.scale,  // Reduced initial width
+					w: 600 / scene.scale,
 					h: 16 / scene.scale,
 					z: 4,
 					creationScale: scene.scale,
@@ -603,7 +617,12 @@
 			// Focus and make the new node editable
 			setTimeout(() => {
 				node.content.focus();
-				node.content.click();
+				const range = document.createRange();
+				range.selectNodeContents(node.content);
+				range.collapse(false);
+				const selection = window.getSelection();
+				selection.removeAllRanges();
+				selection.addRange(range);
 			}, 0);
 		}
 	}
