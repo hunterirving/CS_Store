@@ -384,6 +384,26 @@
 			this.content.style.color = textColor;
 			this.content.style.fontFamily = fontFamily;
 		}
+
+		setAutoplay() {
+			if (this.type === "audio/mpeg" && !this.inStage) {
+				const audio = this.content.querySelector('audio');
+				if (audio) {
+					audio.loop = true;
+					this.elem.setAttribute('data-autoplay', 'true');
+				}
+			}
+		}
+
+		triggerAutoplay() {
+			if (this.type === "audio/mpeg" && !this.inStage) {
+				const audio = this.content.querySelector('audio');
+				if (audio && this.elem.getAttribute('data-autoplay') === 'true') {
+					audio.autoplay = true;
+					audio.play().catch(e => console.log("Autoplay prevented:", e));
+				}
+			}
+		}
 		
 		populateContent(data) {
 			let {type, path} = data;
@@ -407,8 +427,6 @@
 				audio.style.width = "100%";
 				audio.preload = "auto";
 				audio.controls = true;
-				audio.autoplay = true;
-				audio.loop = true;
 				audio.src = path;
 
 				const label = document.createElement("div");
@@ -712,6 +730,7 @@
 			this.elem.appendChild(node.elem);
 			this.children.push(node);
 			node.render();
+			node.setAutoplay();
 		}
 		
 		removeNode(node) {
@@ -780,7 +799,7 @@
 		}
 		
 		dblclick(e) {
-			if (e.target !== this.elem) return; // Only create new node if clicking on the background
+			if (e.target !== this.elem) return;
 
 			const click = new Vec({x: e.clientX - 10, y: e.clientY - 10});
 			const pos = scene.toAbsolute(click);
@@ -800,6 +819,7 @@
 				},
 			});
 			scene.addNode(node);
+			node.setAutoplay();
 			
 			// Focus and make the new node editable
 			setTimeout(() => {
@@ -915,7 +935,9 @@
 			});
 			scene.scale = layout.scale;
 			for (const child of layout.children) {
-				scene.addNode(new Node(child))
+				const node = new Node(child);
+				scene.addNode(node);
+				node.triggerAutoplay();
 			}
 			scene.render();
 		}
