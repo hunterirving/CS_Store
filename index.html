@@ -1,3 +1,5 @@
+<title>CS_Store</title>
+<link id="favicon" rel="icon" href="">
 <style>
 	/* custom colors */
 	:root {
@@ -84,9 +86,7 @@
 		--text: var(--goat-milk);
 		--highlight: var(--burl);
 		--accent: var(--flame);
-		& input[type="text"] {
-			font-family: MedievalSharp;
-		}
+		--font-family: BasteleurMoonlight;
 	}
 
 	body {
@@ -108,7 +108,7 @@
 		left: 0px;
 		margin: 0px;
 		padding: 6px 10px 6px 10px;
-		border-radius: 3px;
+		border-radius: 0;
 	}
 
 	#scene {
@@ -131,6 +131,8 @@
 		overflow-x: hidden;
 		border-radius: 3px;
 		z-index: 2;
+		background-color: var(--background);
+		opacity: 80%;
 	}
 
 	.nodeInStage {
@@ -144,7 +146,7 @@
 		position: absolute;
 		cursor: move;
 		border-radius: 5px;
-		background-color: var(--highlight);
+		/* background-color: var(--highlight); */
 		display: inline-block; /* Change this from block to inline-block */
 		min-width: 100px; /* Add a minimum width */
 	}
@@ -169,7 +171,7 @@
 		word-break: break-all;
 	}
 
-	#path, #stage, .textNode, .dirNode {
+	#path, .textNode, .dirNode {
 		background-color: var(--highlight);
 		color: var(--text);
 	}
@@ -223,7 +225,7 @@
 	}
 
 	function calculateVolume(distance, maxDistance) {
-		const minVolume = 0.01;  // Minimum volume (never completely silent if minVolume > 0)
+		const minVolume = 0;  // Minimum volume (never completely silent if minVolume > 0)
 		const fullVolumeDistance = maxDistance * 0.4;  // Increased distance at which volume starts to decrease
 		const falloffFactor = 1;  // Increase for a more gradual falloff (higher = more gradual)
 
@@ -262,16 +264,35 @@
 		const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
 
 		scene.children.forEach(node => {
-			node.elem.style.backgroundColor = highlightColor;
+			// node.elem.style.backgroundColor = highlightColor;
 			node.content.style.color = textColor;
 			node.content.style.fontFamily = fontFamily;
 		});
 	}
 
+	function updateFavicon() {
+		const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--background').trim();
+		const svgContent = `
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+				<rect width="100" height="100" fill="${backgroundColor}"/>
+			</svg>
+		`;
+		const favicon = document.getElementById('favicon');
+		favicon.href = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
+	}
+
 	function cycleTheme() {
 		currentThemeIndex = (currentThemeIndex + 1) % themes.length;
-		document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
+		const newTheme = themes[currentThemeIndex];
+		document.documentElement.setAttribute('data-theme', newTheme);
 		updateNodeStyles();
+		updateFavicon();
+
+		// Send the new theme to the server
+		ws.send(JSON.stringify({
+			"type": "save_theme",
+			"theme": newTheme
+		}));
 	}
 
 	document.addEventListener('keydown', function(event) {
@@ -296,7 +317,10 @@
 		}
 	}
 
-	window.addEventListener('load', setInitialTheme);
+	window.addEventListener('load', function() {
+		setInitialTheme();
+		updateFavicon();
+	});
 	
 	pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
 	const clamp = (x, min, max) =>
@@ -425,7 +449,7 @@
 			this.elem.style.width = (this.width * scene.scale) + "px";
 			this.elem.style.height = (this.height * scene.scale) + "px";
 			this.elem.style.borderRadius = (this.borderRadius * scene.scale) + "px";
-			this.elem.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
+			//this.elem.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
 			
 			this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
 			this.content.style.padding = (this.padding * scene.scale) + "px";
@@ -436,7 +460,7 @@
 			const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
 			const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
 
-			this.elem.style.backgroundColor = highlightColor;
+			// this.elem.style.backgroundColor = highlightColor;
 			this.content.style.color = textColor;
 			this.content.style.fontFamily = fontFamily;
 		}
@@ -915,7 +939,6 @@
 				},
 			});
 			scene.addNode(node);
-			node.setAutoplay(); // ?
 			
 			// Focus and make the new node editable
 			setTimeout(() => {
@@ -986,7 +1009,7 @@
 	let ws = new WebSocket("ws://localhost:1234/ws");
 	ws.onmessage = e => {
 		resetCanvas();
-		const {files, layout, path} = JSON.parse(e.data);
+		const {files, layout, path, theme} = JSON.parse(e.data);
 		
 		// Create title
 		const p = document.createElement("p");
@@ -1014,6 +1037,15 @@
 			}
 		}
 		document.body.appendChild(p);
+
+		// Set the theme
+		if (theme) {
+			currentThemeIndex = themes.indexOf(theme);
+			if (currentThemeIndex === -1) currentThemeIndex = 0;  // fallback to first theme if not found
+			document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
+			updateNodeStyles();
+			updateFavicon();
+		}
 		
 		// Populate stage with listing
 		files.map(d => {

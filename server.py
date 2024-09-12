@@ -21,32 +21,37 @@ VALID_TYPES = [
 	"audio/mpeg"
 ]
 
-def save_layout(layout):
+def save_layout(layout, theme):
 	global FILE_PATH
 	cs_store_path = f"{FILE_PATH}/.CS_Store"
 	
+	data = {
+		"layout": layout,
+		"theme": theme
+	}
+	
 	try:
 		with open(cs_store_path, "w") as f:
-			json.dump(layout, f, indent=4)
-		logger.info(f"Layout saved successfully to {cs_store_path}")
+			json.dump(data, f, indent=4)
+		logger.info(f"Layout and theme saved successfully to {cs_store_path}")
 	except Exception as e:
-		logger.error(f"Error saving layout: {str(e)}")
+		logger.error(f"Error saving layout and theme: {str(e)}")
 
-def load_layout():
+def load_layout_and_theme():
 	global FILE_PATH
 	cs_store_path = f"{FILE_PATH}/.CS_Store"
 	
 	if os.path.exists(cs_store_path):
 		try:
 			with open(cs_store_path, "r") as f:
-				layout = json.load(f)
-			logger.info(f"Layout loaded successfully from {cs_store_path}")
-			return layout
+				data = json.load(f)
+			logger.info(f"Layout and theme loaded successfully from {cs_store_path}")
+			return data.get("layout", {}), data.get("theme", "default")
 		except json.JSONDecodeError as e:
-			logger.error(f"Error decoding layout file: {str(e)}")
+			logger.error(f"Error decoding .CS_Store file: {str(e)}")
 		except Exception as e:
-			logger.error(f"Error loading layout: {str(e)}")
-	return {}
+			logger.error(f"Error loading layout and theme: {str(e)}")
+	return {}, "default"
 
 def pwd():
 	files = [{
@@ -70,27 +75,39 @@ def pwd():
 				"absolute": os.path.join(FILE_PATH, f)
 			})
 
-	layout = load_layout()
+	layout, theme = load_layout_and_theme()
 
 	return { 
 		"path": FILE_PATH,
 		"files": files,
 		"layout": layout,
+		"theme": theme,
 	}
 
 class WSHandler(tornado.websocket.WebSocketHandler):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.current_theme = "default"
+
 	def on_message(self, message):
 		global FILE_PATH
 
 		message = json.loads(message)
 		if message["type"] == "initialize":
 			response = pwd()
+			self.current_theme = response["theme"]
 			self.write_message(json.dumps(response))
 			logger.info("Sent initial data to client")
 
 		elif message["type"] ==  "layout":
-			save_layout(message["layout"])
+			save_layout(message["layout"], self.current_theme)
 			logger.info("Received and saved new layout from client")
+
+		elif message["type"] == "save_theme":
+			self.current_theme = message["theme"]
+			layout, _ = load_layout_and_theme()
+			save_layout(layout, self.current_theme)
+			logger.info(f"Received and saved new theme: {self.current_theme}")
 
 		elif message["type"] == "cd":
 			FILE_PATH = message["path"]
