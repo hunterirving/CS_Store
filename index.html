@@ -788,8 +788,13 @@
 							// Remove from selection
 							const index = scene.selectedNodes.indexOf(this);
 							if (index > -1) {
+								// Remove outline from this specific node
+								if (this.content) {
+									this.content.style.outline = '';
+									this.content.style.outlineOffset = '';
+									console.log('Removed outline on deselect:', this.content);
+								}
 								scene.selectedNodes.splice(index, 1);
-								this.elem.style.border = '';
 							}
 						} else {
 							// Add to selection
