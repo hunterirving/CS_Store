@@ -845,6 +845,7 @@
 			this.isSelecting = false;
 			this.selectionStart = null;
 			this.selectionBox = null;
+			this.justFinishedBoxSelection = false;
 			
 			this.elem.addEventListener("wheel", (e) => this.wheel(e));
 			this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
@@ -857,7 +858,12 @@
 			this.elem.addEventListener("click", (e) => {
 				if (e.target === this.elem) {
 					document.activeElement.blur();
-					this.clearSelection();
+					
+					// Only clear selection if we didn't just finish a box selection
+					if (!this.justFinishedBoxSelection) {
+						console.log('Clearing selection on canvas click');
+						this.clearSelection();
+					}
 				}
 			});
 		}
@@ -978,9 +984,10 @@
 				this.selectionBox = document.createElement('div');
 				this.selectionBox.style.position = 'absolute';
 				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-				this.selectionBox.style.border = `2px solid ${accentColor}`;
+				this.selectionBox.style.border = `3px solid ${accentColor}`;
 				this.selectionBox.style.backgroundColor = accentColor;
-				this.selectionBox.style.opacity = '0.2';
+				this.selectionBox.style.opacity = '0.15';
+				this.selectionBox.id = 'selection-box';
 				this.selectionBox.style.pointerEvents = 'none'; // Don't capture mouse events
 				this.selectionBox.style.zIndex = '999';
 				this.elem.appendChild(this.selectionBox);
@@ -1012,6 +1019,9 @@
 				this.selectionBox.style.top = `${top}px`;
 				this.selectionBox.style.width = `${width}px`;
 				this.selectionBox.style.height = `${height}px`;
+				
+				// Log for debugging
+				console.log('Updating selection box:', { left, top, width, height });
 			}
 		}
 		
@@ -1019,35 +1029,62 @@
 			e.preventDefault();
 			
 			if (this.isSelecting && this.selectionBox) {
+				// Flag to prevent click event from clearing the selection
+				this.justFinishedBoxSelection = true;
+				
 				// Get box dimensions
 				const rect = this.selectionBox.getBoundingClientRect();
+				const hasMinimumSize = rect.width > 5 && rect.height > 5;
 				
-				// Clear previous selection only if not adding to selection with ctrl/cmd
-				if (!e.ctrlKey && !e.metaKey) {
-					this.clearSelection();
-				}
-				
-				// Find nodes that are inside the selection box
-				this.children.forEach(node => {
+				// Only process selection if the box has a minimum size
+				if (hasMinimumSize) {
+					// Clear previous selection only if not adding to selection with ctrl/cmd
+					if (!e.ctrlKey && !e.metaKey) {
+						this.clearSelection();
+					}
+					
+					// Find nodes that are inside the selection box
+					console.log('Selection box rect:', rect);
+					let selectedAny = false;
+					
+					this.children.forEach(node => {
+					// Get the nodeInScene element's bounding box
 					const nodeRect = node.elem.getBoundingClientRect();
+					console.log('Node rect:', nodeRect, 'for node:', node);
+					
+					// If the node is not visible, skip it
+					if (!nodeRect.width || !nodeRect.height) {
+						console.log('Skipping invisible node:', node);
+						return;
+					}
 					
 					// Check for overlap - a node is selected if there's any overlap with the selection box
-					if (!(
+					const isOverlapping = !(
 						nodeRect.right < rect.left ||
 						nodeRect.left > rect.right ||
 						nodeRect.bottom < rect.top ||
 						nodeRect.top > rect.bottom
-					)) {
-						// Log for debugging
+					);
+					
+					if (isOverlapping) {
 						console.log('Node selected by box:', node);
 						this.selectNode(node);
+						selectedAny = true;
 					}
 				});
+					
+					console.log('Box selection complete, selected nodes:', selectedAny ? this.selectedNodes.length : 0);
+				}
 				
 				// Reset selection state
 				this.selectionBox.style.display = 'none';
 				this.isSelecting = false;
 				this.selectionStart = null;
+				
+				// Clear the flag after a short delay to handle the click event
+				setTimeout(() => {
+					this.justFinishedBoxSelection = false;
+				}, 100);
 			}
 		}
 		
@@ -1055,16 +1092,30 @@
 			if (!this.selectedNodes.includes(node)) {
 				this.selectedNodes.push(node);
 				
-				// Add selection border using accent color
+				// Add selection border to the first child element within the nodeInScene div
 				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-				node.elem.style.border = `1px solid ${accentColor}`;
+				
+				// The actual content element is node.content (the first child)
+				if (node.content) {
+					// Use outline instead of border to avoid shifting content
+					node.content.style.outline = `1px solid ${accentColor}`;
+					node.content.style.outlineOffset = '0px';
+					console.log('Applied outline to node content:', node.content);
+				} else {
+					console.log('No content element found for node:', node);
+				}
 			}
 		}
 		
 		clearSelection() {
 			// Remove selection styling from all nodes
 			this.selectedNodes.forEach(node => {
-				node.elem.style.border = '';
+				// Clear outline from the content element
+				if (node.content) {
+					node.content.style.outline = '';
+					node.content.style.outlineOffset = '';
+					console.log('Removed outline from node content:', node.content);
+				}
 			});
 			this.selectedNodes = [];
 		}
