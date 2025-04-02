@@ -558,14 +558,40 @@
 				return audioContainer;
 				
 			} else if (type === "video/mp4") {
+				const videoContainer = document.createElement("div");
+				videoContainer.style.display = "flex";
+				videoContainer.style.flexDirection = "column";
+				videoContainer.style.justifyContent = "center";
+
 				const video = document.createElement("video");
-				video.controls = true;
 				video.style.width = "100%";
-				video.onload = () => {
-					this.ratio = img.width / img.height;
-				}
+				video.preload = "auto";
+				video.controls = true;
 				video.src = path;
-				return video;
+				
+				// Only stop propagation for video controls when playing
+				video.addEventListener("mousedown", e => {
+					// Allow mousedown to propagate when trying to delete (alt key)
+					// or when video is paused (so user can drag it)
+					if (!e.altKey && !video.paused) {
+						e.stopPropagation();
+					}
+				});
+
+				const label = document.createElement("div");
+				label.textContent = path.split('/').pop(); // Display filename
+				label.style.textAlign = "center";
+				label.style.padding = "5px";
+				label.style.overflow = "hidden";
+				label.style.textOverflow = "ellipsis";
+				label.style.whiteSpace = "nowrap";
+				label.style.fontSize = "0.8em";
+
+				videoContainer.appendChild(video);
+				videoContainer.appendChild(label);
+
+				this.ratio = 16/9; // Default aspect ratio for videos
+				return videoContainer;
 				
 			} else if (type === "application/pdf") {
 				const canvas = document.createElement("canvas");
@@ -765,7 +791,26 @@
 				scene.addNode(copy);
 
 				// Continue moving the copy
-				copy.elem.dispatchEvent(new MouseEvent('mousedown', e));
+				const mouseEvent = new MouseEvent('mousedown', {
+					clientX: e.clientX,
+					clientY: e.clientY,
+					bubbles: true,
+					cancelable: true,
+					altKey: false // Ensure alt key isn't passed to avoid deletion
+				});
+				
+				// For video and audio elements, add a safety mechanism
+				if (this.data.type === "video/mp4" || this.data.type === "audio/mpeg") {
+					// Global handler that will clear selection on mouseup
+					const globalMouseUp = () => {
+						copy.dragging = false;
+						window.getSelection().empty();
+						document.removeEventListener('mouseup', globalMouseUp);
+					};
+					document.addEventListener('mouseup', globalMouseUp, { once: true });
+				}
+				
+				copy.elem.dispatchEvent(mouseEvent);
 				this.dragging = false;
 
 			} else {
@@ -773,6 +818,38 @@
 					scene.removeNode(this);
 					this.elem.remove();
 				} else {
+					// Check if we're clicking on a selected node
+					const isNodeInSelection = scene.selectedNodes.includes(this);
+					
+					// If not a selected node and not adding to selection with ctrl/cmd,
+					// clear the current selection
+					if (!isNodeInSelection && !e.ctrlKey && !e.metaKey) {
+						scene.clearSelection();
+					}
+					
+					// If ctrl/cmd key is pressed, toggle this node's selection
+					if (e.ctrlKey || e.metaKey) {
+						if (isNodeInSelection) {
+							// Remove from selection
+							const index = scene.selectedNodes.indexOf(this);
+							if (index > -1) {
+								// Remove outline from this specific node
+								if (this.content) {
+									this.content.style.outline = '';
+									this.content.style.outlineOffset = '';
+									console.log('Removed outline on deselect:', this.content);
+								}
+								scene.selectedNodes.splice(index, 1);
+							}
+						} else {
+							// Add to selection
+							scene.selectNode(this);
+						}
+					} else if (!isNodeInSelection) {
+						// Add to selection if not already selected
+						scene.selectNode(this);
+					}
+					
 					this.depth = 4;
 					this.render();
 				}
@@ -781,10 +858,29 @@
 		
 		mousemove(e) {
 			if (this.dragging) {
+				// Prevent text selection during drag
+				e.preventDefault();
+				
 				const click = new Vec({x: e.clientX, y: e.clientY});
 				const delta = click.sub(this.click);
-				this.moveInViewport(delta);
+				
+				// If this node is part of a selection, move all selected nodes
+				if (scene.selectedNodes.includes(this) && scene.selectedNodes.length > 1) {
+					scene.moveSelectedNodes(delta);
+				} else {
+					this.moveInViewport(delta);
+				}
+				
 				this.click = click;
+				
+				// Ensure no text gets selected during dragging
+				if (window.getSelection) {
+					if (window.getSelection().empty) {  // Chrome
+						window.getSelection().empty();
+					} else if (window.getSelection().removeAllRanges) {  // Firefox
+						window.getSelection().removeAllRanges();
+					}
+				}
 			}
 		}
 		
@@ -805,18 +901,31 @@
 			this.origin = new Vec({x: 0, y: 0});
 			this.scale = 1;
 			this.children = [];
+			this.selectedNodes = [];
+			
+			// Box selection variables
+			this.isSelecting = false;
+			this.selectionStart = null;
+			this.selectionBox = null;
+			this.justFinishedBoxSelection = false;
 			
 			this.elem.addEventListener("wheel", (e) => this.wheel(e));
 			this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
 			this.elem.addEventListener("gesturechange", (e) => this.gesturechange(e));
 			this.elem.addEventListener("gestureend", (e) => e.preventDefault());
-			this.elem.addEventListener("mousedown", (e) => e.preventDefault());
-			this.elem.addEventListener("mousemove", (e) => e.preventDefault());
-			this.elem.addEventListener("mouseup", (e) => e.preventDefault());
+			this.elem.addEventListener("mousedown", (e) => this.mousedown(e));
+			this.elem.addEventListener("mousemove", (e) => this.mousemove(e));
+			this.elem.addEventListener("mouseup", (e) => this.mouseup(e));
 			this.elem.addEventListener("dblclick", (e) => this.dblclick(e));
 			this.elem.addEventListener("click", (e) => {
 				if (e.target === this.elem) {
 					document.activeElement.blur();
+					
+					// Only clear selection if we didn't just finish a box selection
+					if (!this.justFinishedBoxSelection) {
+						console.log('Clearing selection on canvas click');
+						this.clearSelection();
+					}
 				}
 			});
 		}
@@ -916,6 +1025,168 @@
 			const delta = b.sub(a);
 			this.origin = this.origin.sub(delta);
 			this.render();
+		}
+		
+		mousedown(e) {
+			// Only handle mousedown on the scene element itself, not on nodes
+			if (e.target !== this.elem) return;
+			e.preventDefault();
+			
+			// Clear selection when clicking empty space, unless adding to selection with ctrl/cmd
+			if (!e.ctrlKey && !e.metaKey) {
+				this.clearSelection();
+			}
+			
+			// Start box selection
+			this.isSelecting = true;
+			this.selectionStart = new Vec({x: e.clientX, y: e.clientY});
+			
+			// Create the selection box element if it doesn't exist
+			if (!this.selectionBox) {
+				this.selectionBox = document.createElement('div');
+				this.selectionBox.style.position = 'absolute';
+				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+				this.selectionBox.style.border = `3px solid ${accentColor}`;
+				this.selectionBox.style.backgroundColor = accentColor;
+				this.selectionBox.style.opacity = '0.15';
+				this.selectionBox.id = 'selection-box';
+				this.selectionBox.style.pointerEvents = 'none'; // Don't capture mouse events
+				this.selectionBox.style.zIndex = '999';
+				this.elem.appendChild(this.selectionBox);
+			}
+			
+			// Initial position and size
+			this.selectionBox.style.left = `${e.clientX}px`;
+			this.selectionBox.style.top = `${e.clientY}px`;
+			this.selectionBox.style.width = '0px';
+			this.selectionBox.style.height = '0px';
+			this.selectionBox.style.display = 'block';
+		}
+		
+		mousemove(e) {
+			e.preventDefault();
+			
+			if (this.isSelecting && this.selectionStart) {
+				const currentPos = new Vec({x: e.clientX, y: e.clientY});
+				const startPos = this.selectionStart;
+				
+				// Calculate box dimensions
+				const left = Math.min(startPos.x, currentPos.x);
+				const top = Math.min(startPos.y, currentPos.y);
+				const width = Math.abs(currentPos.x - startPos.x);
+				const height = Math.abs(currentPos.y - startPos.y);
+				
+				// Update selection box style
+				this.selectionBox.style.left = `${left}px`;
+				this.selectionBox.style.top = `${top}px`;
+				this.selectionBox.style.width = `${width}px`;
+				this.selectionBox.style.height = `${height}px`;
+				
+				// Log for debugging
+				console.log('Updating selection box:', { left, top, width, height });
+			}
+		}
+		
+		mouseup(e) {
+			e.preventDefault();
+			
+			if (this.isSelecting && this.selectionBox) {
+				// Flag to prevent click event from clearing the selection
+				this.justFinishedBoxSelection = true;
+				
+				// Get box dimensions
+				const rect = this.selectionBox.getBoundingClientRect();
+				const hasMinimumSize = rect.width > 5 && rect.height > 5;
+				
+				// Only process selection if the box has a minimum size
+				if (hasMinimumSize) {
+					// Clear previous selection only if not adding to selection with ctrl/cmd
+					if (!e.ctrlKey && !e.metaKey) {
+						this.clearSelection();
+					}
+					
+					// Find nodes that are inside the selection box
+					console.log('Selection box rect:', rect);
+					let selectedAny = false;
+					
+					this.children.forEach(node => {
+					// Get the nodeInScene element's bounding box
+					const nodeRect = node.elem.getBoundingClientRect();
+					console.log('Node rect:', nodeRect, 'for node:', node);
+					
+					// If the node is not visible, skip it
+					if (!nodeRect.width || !nodeRect.height) {
+						console.log('Skipping invisible node:', node);
+						return;
+					}
+					
+					// Check for overlap - a node is selected if there's any overlap with the selection box
+					const isOverlapping = !(
+						nodeRect.right < rect.left ||
+						nodeRect.left > rect.right ||
+						nodeRect.bottom < rect.top ||
+						nodeRect.top > rect.bottom
+					);
+					
+					if (isOverlapping) {
+						console.log('Node selected by box:', node);
+						this.selectNode(node);
+						selectedAny = true;
+					}
+				});
+					
+					console.log('Box selection complete, selected nodes:', selectedAny ? this.selectedNodes.length : 0);
+				}
+				
+				// Reset selection state
+				this.selectionBox.style.display = 'none';
+				this.isSelecting = false;
+				this.selectionStart = null;
+				
+				// Clear the flag after a short delay to handle the click event
+				setTimeout(() => {
+					this.justFinishedBoxSelection = false;
+				}, 100);
+			}
+		}
+		
+		selectNode(node) {
+			if (!this.selectedNodes.includes(node)) {
+				this.selectedNodes.push(node);
+				
+				// Add selection border to the first child element within the nodeInScene div
+				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+				
+				// The actual content element is node.content (the first child)
+				if (node.content) {
+					// Use outline instead of border to avoid shifting content
+					node.content.style.outline = `1px solid ${accentColor}`;
+					node.content.style.outlineOffset = '0px';
+					console.log('Applied outline to node content:', node.content);
+				} else {
+					console.log('No content element found for node:', node);
+				}
+			}
+		}
+		
+		clearSelection() {
+			// Remove selection styling from all nodes
+			this.selectedNodes.forEach(node => {
+				// Clear outline from the content element
+				if (node.content) {
+					node.content.style.outline = '';
+					node.content.style.outlineOffset = '';
+					console.log('Removed outline from node content:', node.content);
+				}
+			});
+			this.selectedNodes = [];
+		}
+		
+		moveSelectedNodes(delta) {
+			// Move all selected nodes by the same delta
+			this.selectedNodes.forEach(node => {
+				node.moveInViewport(delta);
+			});
 		}
 		
 		dblclick(e) {
