@@ -558,14 +558,40 @@
 				return audioContainer;
 				
 			} else if (type === "video/mp4") {
+				const videoContainer = document.createElement("div");
+				videoContainer.style.display = "flex";
+				videoContainer.style.flexDirection = "column";
+				videoContainer.style.justifyContent = "center";
+
 				const video = document.createElement("video");
-				video.controls = true;
 				video.style.width = "100%";
-				video.onload = () => {
-					this.ratio = img.width / img.height;
-				}
+				video.preload = "auto";
+				video.controls = true;
 				video.src = path;
-				return video;
+				
+				// Only stop propagation for video controls when playing
+				video.addEventListener("mousedown", e => {
+					// Allow mousedown to propagate when trying to delete (alt key)
+					// or when video is paused (so user can drag it)
+					if (!e.altKey && !video.paused) {
+						e.stopPropagation();
+					}
+				});
+
+				const label = document.createElement("div");
+				label.textContent = path.split('/').pop(); // Display filename
+				label.style.textAlign = "center";
+				label.style.padding = "5px";
+				label.style.overflow = "hidden";
+				label.style.textOverflow = "ellipsis";
+				label.style.whiteSpace = "nowrap";
+				label.style.fontSize = "0.8em";
+
+				videoContainer.appendChild(video);
+				videoContainer.appendChild(label);
+
+				this.ratio = 16/9; // Default aspect ratio for videos
+				return videoContainer;
 				
 			} else if (type === "application/pdf") {
 				const canvas = document.createElement("canvas");
@@ -765,7 +791,26 @@
 				scene.addNode(copy);
 
 				// Continue moving the copy
-				copy.elem.dispatchEvent(new MouseEvent('mousedown', e));
+				const mouseEvent = new MouseEvent('mousedown', {
+					clientX: e.clientX,
+					clientY: e.clientY,
+					bubbles: true,
+					cancelable: true,
+					altKey: false // Ensure alt key isn't passed to avoid deletion
+				});
+				
+				// For video and audio elements, add a safety mechanism
+				if (this.data.type === "video/mp4" || this.data.type === "audio/mpeg") {
+					// Global handler that will clear selection on mouseup
+					const globalMouseUp = () => {
+						copy.dragging = false;
+						window.getSelection().empty();
+						document.removeEventListener('mouseup', globalMouseUp);
+					};
+					document.addEventListener('mouseup', globalMouseUp, { once: true });
+				}
+				
+				copy.elem.dispatchEvent(mouseEvent);
 				this.dragging = false;
 
 			} else {
@@ -813,6 +858,9 @@
 		
 		mousemove(e) {
 			if (this.dragging) {
+				// Prevent text selection during drag
+				e.preventDefault();
+				
 				const click = new Vec({x: e.clientX, y: e.clientY});
 				const delta = click.sub(this.click);
 				
@@ -824,6 +872,15 @@
 				}
 				
 				this.click = click;
+				
+				// Ensure no text gets selected during dragging
+				if (window.getSelection) {
+					if (window.getSelection().empty) {  // Chrome
+						window.getSelection().empty();
+					} else if (window.getSelection().removeAllRanges) {  // Firefox
+						window.getSelection().removeAllRanges();
+					}
+				}
 			}
 		}
 		
