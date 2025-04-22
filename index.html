@@ -693,22 +693,68 @@
 				p.contentEditable = "true";
 				p.spellcheck = false;
 
-				p.addEventListener("click", (e) => {
-					e.stopPropagation();
-					p.focus();
-					// Place cursor at the end of the text
-					const range = document.createRange();
-					range.selectNodeContents(p);
-					range.collapse(false);
-					const selection = window.getSelection();
-					selection.removeAllRanges();
-					selection.addRange(range);
+				// Prevent parent mousedown when editing text (not dragging)
+				p.addEventListener("mousedown", (e) => {
+					// Check if the text node is being dragged vs. edited
+					const isEditMode = document.activeElement === p;
+					
+					if (isEditMode) {
+						// We're already focused and editing text - prevent dragging behavior
+						e.stopPropagation();
+					}
+					// Otherwise, don't stop propagation so the node can be dragged
 				});
+				
+				// Handle clicks to place cursor within text
+				p.addEventListener("click", (e) => {
+					// Always stop propagation for clicks inside text nodes
+					e.stopPropagation();
+					
+					// Focus the text node if not already focused
+					if (document.activeElement !== p) {
+						p.focus();
+						
+						// Initial activation - place cursor at the end
+						const range = document.createRange();
+						range.selectNodeContents(p);
+						range.collapse(false); // Collapse to end
+						const selection = window.getSelection();
+						selection.removeAllRanges();
+						selection.addRange(range);
+					}
+					// If already focused, the browser's default click behavior will position the cursor
+				});
+				// Clear any text selection when losing focus
 				p.addEventListener("blur", () => {
 					if (p.innerHTML.trim() === "") {
 						p.innerHTML = "";
 					}
 					this.data.path = p.innerHTML;
+					
+					// Clear any text selection when the node loses focus
+					window.getSelection().removeAllRanges();
+				});
+				
+				// Update cursor style based on active state
+				p.addEventListener("mouseover", () => {
+					// Show text cursor when node is active/focused
+					if (document.activeElement === p) {
+						p.style.cursor = "text";
+					} else {
+						p.style.cursor = "move"; // Use move cursor when not editing
+					}
+				});
+				
+				// Make sure cursor style updates immediately when focus changes
+				p.addEventListener("focus", () => {
+					p.style.cursor = "text";
+				});
+				
+				// Reset cursor when mouse leaves the element
+				p.addEventListener("mouseout", () => {
+					if (document.activeElement !== p) {
+						p.style.cursor = ""; // Reset to default when not hovering
+					}
 				});
 				p.onkeyup = (e) => {
 					this.data.path = p.innerHTML;
@@ -1280,8 +1326,92 @@
 	
 	let lastSavedLayout = null;
 	
+	// Create notification container for connection alerts
+	const createNotificationSystem = () => {
+		const container = document.createElement('div');
+		container.id = 'notification-container';
+		container.style.position = 'fixed';
+		container.style.top = '20px';
+		container.style.left = '50%';
+		container.style.transform = 'translateX(-50%)';
+		container.style.zIndex = '9999';
+		container.style.display = 'none';
+		document.body.appendChild(container);
+		
+		return {
+			show: (message, isError = false) => {
+				container.innerHTML = '';
+				container.style.display = 'block';
+				
+				const notification = document.createElement('div');
+				notification.style.padding = '12px 20px';
+				notification.style.borderRadius = '5px';
+				notification.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+				notification.style.fontSize = '14px';
+				notification.style.maxWidth = '400px';
+				notification.style.textAlign = 'center';
+				
+				// Use theme colors
+				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+				const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
+				const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
+				
+				notification.style.backgroundColor = isError ? accentColor : backgroundColor;
+				notification.style.color = textColor;
+				notification.innerText = message;
+				
+				// Add close button
+				const closeBtn = document.createElement('span');
+				closeBtn.innerHTML = '&times;';
+				closeBtn.style.marginLeft = '10px';
+				closeBtn.style.cursor = 'pointer';
+				closeBtn.style.fontWeight = 'bold';
+				closeBtn.onclick = () => {
+					container.style.display = 'none';
+				};
+				notification.appendChild(closeBtn);
+				
+				container.appendChild(notification);
+				
+				// Auto-hide after 10 seconds unless it's an error
+				if (!isError) {
+					setTimeout(() => {
+						container.style.display = 'none';
+					}, 10000);
+				}
+			},
+			hide: () => {
+				container.style.display = 'none';
+			}
+		};
+	};
+
+	const notification = createNotificationSystem();
+
+	// Create WebSocket connection with reconnection functionality
 	let ws = new WebSocket("ws://localhost:1234/ws");
-	ws.onmessage = e => {
+	let reconnectAttempts = 0;
+	let reconnectInterval = null;
+
+	// Function to attempt reconnection
+	const attemptReconnect = () => {
+		if (reconnectAttempts < 5) { // Limit reconnection attempts
+			reconnectAttempts++;
+			notification.show(`Connection lost. Attempting to reconnect (${reconnectAttempts}/5)...`, true);
+			ws = new WebSocket("ws://localhost:1234/ws");
+			setupWebSocketHandlers();
+		} else {
+			notification.show('Unable to connect to server. Please refresh the page or check if the server is running.', true);
+			clearInterval(reconnectInterval);
+		}
+	};
+
+	// Set up all WebSocket event handlers
+	const setupWebSocketHandlers = () => {
+		ws.onmessage = e => {
+			// If we get a message, we're connected, so reset reconnect attempts
+			reconnectAttempts = 0;
+			notification.hide();
 		resetCanvas();
 		const {files, layout, path, theme} = JSON.parse(e.data);
 		
@@ -1345,9 +1475,20 @@
 		}
 		
 		lastSavedLayout = layout;
+	};
 	}
 	
 	ws.onopen = e => {
+		// Reset reconnection attempts and clear any error notifications
+		reconnectAttempts = 0;
+		notification.hide();
+		
+		if (reconnectInterval) {
+			clearInterval(reconnectInterval);
+			reconnectInterval = null;
+			notification.show("Connection to server restored!", false);
+		}
+		
 		ws.send(JSON.stringify({"type": "initialize"}));
 		
 		const autosave = () => {
@@ -1363,7 +1504,34 @@
 			setTimeout(autosave, 1000);
 		}
 		setTimeout(autosave, 1000);
-	}
+	};
+	
+	ws.onclose = e => {
+		console.log("WebSocket connection closed", e);
+		
+		// Only show notification if it wasn't a normal closure
+		if (!e.wasClean) {
+			notification.show("Connection to server lost. Attempting to reconnect...", true);
+			
+			// Set up reconnection interval if not already active
+			if (!reconnectInterval) {
+				reconnectInterval = setInterval(attemptReconnect, 5000);
+			}
+		}
+	};
+	
+	ws.onerror = e => {
+		console.error("WebSocket error:", e);
+		notification.show("Connection error. Attempting to reconnect...", true);
+		
+		// Set up reconnection interval if not already active
+		if (!reconnectInterval) {
+			reconnectInterval = setInterval(attemptReconnect, 5000);
+		}
+	};
+	
+	// Initial setup of handlers
+	setupWebSocketHandlers();
 
 	function updateAllAudioSpatialization() {
 		scene.children.forEach(node => {
