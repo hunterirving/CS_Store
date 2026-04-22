@@ -803,7 +803,7 @@
 				const pos = scene.toViewport(this.position);
 				this.elem.style.left = pos.x + "px";
 				this.elem.style.top = pos.y + "px";
-				this.elem.style.zIndex = Math.min(this.depth, this.maxDepth);
+				this.elem.style.zIndex = this.depth;
 				this.elem.style.width = (this.width * scene.scale) + "px";
 				this.elem.style.height = (this.height * scene.scale) + "px";
 			}
@@ -1292,7 +1292,7 @@
 
 				copy.dragging = true;
 				copy.click = new Vec({ x: e.clientX, y: e.clientY });
-				copy.depth = 4;
+				copy.depth = ++scene.topZ;
 				copy.render();
 				document.body.classList.add("grabbing");
 				document.addEventListener('mousemove', copy.boundMouseMove);
@@ -1394,12 +1394,12 @@
 						scene.selectNode(this);
 					}
 					
-					this.depth = 4;
+					this.depth = ++scene.topZ;
 					this.render();
 				}
 			}
 		}
-		
+
 		mousemove(e) {
 			if (this.dragging) {
 				// Prevent text selection during drag
@@ -1432,7 +1432,6 @@
 			if (this.dragging) {
 				this.dragging = false;
 				this.render();
-				this.depth = 1;
 			}
 			document.body.classList.remove("grabbing");
 			document.removeEventListener('mousemove', this.boundMouseMove);
@@ -1447,6 +1446,7 @@
 			this.scale = 1;
 			this.children = [];
 			this.selectedNodes = [];
+			this.topZ = 4;
 			
 			// Box selection variables
 			this.isSelecting = false;
@@ -1562,7 +1562,6 @@
 			
 			const {width, height} = this.elem.getBoundingClientRect();
 			for (const child of this.children) {
-				child.depth = 1;
 				child.render();
 			}
 			this.render();
