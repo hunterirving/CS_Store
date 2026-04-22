@@ -108,6 +108,8 @@
 	}
 
 	#path {
+		display: none;
+		/*
 		font-size: 12px;
 		position: absolute;
 		top: 0px;
@@ -115,6 +117,7 @@
 		margin: 0px;
 		padding: 6px 10px 6px 10px;
 		border-radius: 0;
+		*/
 	}
 
 	#scene {
@@ -130,15 +133,20 @@
 
 	#stage {
 		position: absolute;
-		top: 20px;
-		right: 20px;
-		width: 150px;
-		height: 95vh;
+		top: 0;
+		right: 0;
+		width: 95px;
+		height: 100vh;
 		overflow-x: hidden;
-		border-radius: 3px;
+		overflow-y: auto;
+		scrollbar-width: none;
 		z-index: 2;
 		background-color: var(--background);
-		opacity: 80%;
+		box-shadow: -2px 0 5px rgba(0, 0, 0, 0.15);
+	}
+
+	#stage::-webkit-scrollbar {
+		display: none;
 	}
 
 	.nodeInStage {
@@ -146,6 +154,7 @@
 		margin: 10px 15px;
 		z-index: 3;
 		cursor: grab;
+		opacity: 70%;
 	}
 	
 	.nodeInScene {
@@ -169,6 +178,12 @@
 		overflow-wrap: break-word;
 		white-space: pre-wrap; /* Allow text to wrap */
 		word-break: break-word; /* Break words if necessary */
+		overflow-y: auto;
+		scrollbar-width: none;
+	}
+
+	.textNode::-webkit-scrollbar {
+		display: none;
 	}
 
 	.dirNode {
@@ -647,7 +662,7 @@
 			const wrap = this._imageWrap;
 			const img = this._imageEl;
 			wrap.style.position = "static";
-			wrap.style.width = "120px";
+			wrap.style.width = "100%";
 			wrap.style.height = "auto";
 			wrap.style.overflow = "visible";
 			img.style.position = "static";
