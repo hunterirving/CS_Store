@@ -91,6 +91,8 @@
 
 	html {
 		scrollbar-color: var(--text) var(--background);
+		overflow: hidden;
+		height: 100%;
 	}
 
 	body {
@@ -148,15 +150,18 @@
 	
 	.nodeInScene {
 		position: absolute;
-		cursor: move;
-		border-radius: 5px;
+		cursor: grab;
+		border-radius: 0;
 		/* background-color: var(--highlight); */
 		display: inline-block; /* Change this from block to inline-block */
 	}
 
+	.nodeInScene.grabbing { cursor: grabbing; }
+	body.grabbing, body.grabbing * { cursor: grabbing !important; }
+
 	.textNode {
 		margin: 0px;
-		border-radius: 5px;
+		border-radius: 0;
 		background-color: transparent;
 		box-shadow: none;
 		outline-style: none;
@@ -168,8 +173,7 @@
 
 	.dirNode {
 		margin: 0px;
-		border-radius: 5px;
-		
+		border-radius: 0;
 		text-align: center;
 		word-break: break-all;
 	}
@@ -329,6 +333,12 @@
 
 	// Currently hovered text node (used to redirect pinch-zoom to font scaling)
 	let hoveredTextNode = null;
+
+	// Wheel-stream tracking: lets image nodes ignore wheel events that are
+	// part of an ongoing canvas-pan stream so panning doesn't snap to image
+	// pan/zoom when the cursor crosses an image.
+	let lastWheelTs = 0;
+	let lastWheelNode = null;
 	const clamp = (x, min, max) =>
 	Math.min(Math.max(x, min), max)
 	
@@ -382,6 +392,7 @@
 		constructor({ render, data }) {
 			const {
 				x, y, z, w = null, h = null, creationScale, fontSize = null,
+				userScale = 1, panX = 0, panY = 0,
 			} = render;
 			
 			this.data = data;
@@ -409,7 +420,12 @@
 			this.creationScale = creationScale;
 			this.padding = 8 / creationScale;
 			this.fontSize = fontSize !== null ? fontSize : 26 / creationScale;
-			this.borderRadius = 5 / creationScale;
+			this.borderRadius = 0;
+
+			// Image zoom-to-crop / pan state (used by image types only)
+			this.userScale = userScale;
+			this.panX = panX;
+			this.panY = panY;
 			
 			// Populate div and set ratio
 			this.content = this.populateContent(data);
@@ -499,6 +515,8 @@
 				startW: this.width,
 				startH: this.height,
 				startFontSize: this.fontSize,
+				startPanX: this.panX,
+				startPanY: this.panY,
 				ratio: (this.width && this.height) ? this.width / this.height : this.ratio,
 			};
 
@@ -549,12 +567,9 @@
 				}
 			}
 
-			// Always preserve aspect ratio for media types.
-			// Edge handles drive only one axis, so derive the other from the ratio.
+			// PDF / video still keep their aspect; images now resize freely
+			// because the cover-fit transform handles cropping for any box.
 			const lockAspect = (
-				this.type === "image/jpeg" ||
-				this.type === "image/png" ||
-				this.type === "image/gif" ||
 				this.type === "application/pdf" ||
 				this.type === "video/mp4"
 			);
@@ -587,12 +602,156 @@
 				newH = minSize;
 			}
 
+			// Anchor the image to the opposite edge being dragged so it doesn't
+			// appear to slide as the box changes size. Compute the new pan from
+			// the *start* of the resize (not the previous frame) so corrections
+			// don't accumulate.
+			const isImage = (
+				this.type === "image/jpeg" ||
+				this.type === "image/png" ||
+				this.type === "image/gif"
+			) && this._imageEl && this._imageEl.naturalWidth;
+			if (isImage) {
+				const nw = this._imageEl.naturalWidth;
+				const nh = this._imageEl.naturalHeight;
+				const oldBoxW = r.startW * scene.scale;
+				const oldBoxH = r.startH * scene.scale;
+				const newBoxW = newW * scene.scale;
+				const newBoxH = newH * scene.scale;
+				const oldBase = Math.max((oldBoxW + 1) / nw, (oldBoxH + 1) / nh);
+				const newBase = Math.max((newBoxW + 1) / nw, (newBoxH + 1) / nh);
+				const oldTotal = oldBase * this.userScale;
+				const newTotal = newBase * this.userScale;
+
+				if (affectsX) {
+					const halfX = oldBoxW / (2 * oldTotal) - newBoxW / (2 * newTotal);
+					// dragging right edge (!movesLeft) → anchor left edge → +halfX
+					// dragging left edge (movesLeft)   → anchor right edge → -halfX
+					this.panX = r.startPanX + (movesLeft ? -halfX : halfX);
+				}
+				if (affectsY) {
+					const halfY = oldBoxH / (2 * oldTotal) - newBoxH / (2 * newTotal);
+					this.panY = r.startPanY + (movesTop ? -halfY : halfY);
+				}
+			}
+
 			this.width = newW;
 			this.height = newH;
 			this.position = new Vec({ x: newX, y: newY });
+			if (isImage) this.clampImagePan();
 			this.render();
 		}
-		
+
+		applyImageStageMode() {
+			if (!this._imageEl) return;
+			const wrap = this._imageWrap;
+			const img = this._imageEl;
+			wrap.style.position = "static";
+			wrap.style.width = "120px";
+			wrap.style.height = "auto";
+			wrap.style.overflow = "visible";
+			img.style.position = "static";
+			img.style.top = "";
+			img.style.left = "";
+			img.style.transform = "";
+			img.style.width = "100%";
+			img.style.height = "auto";
+			img.style.pointerEvents = "auto";
+		}
+
+		applyImageSceneMode() {
+			if (!this._imageEl) return;
+			const wrap = this._imageWrap;
+			const img = this._imageEl;
+			wrap.style.position = "relative";
+			wrap.style.width = "100%";
+			wrap.style.height = "100%";
+			wrap.style.overflow = "hidden";
+			img.style.position = "absolute";
+			img.style.top = "50%";
+			img.style.left = "50%";
+			img.style.width = "";
+			img.style.height = "";
+			img.style.pointerEvents = "none";
+			this.render();
+		}
+
+		// memori-style zoom-to-crop and pan, scoped to the hovered image only
+		bindImageZoomPan(target) {
+			target.addEventListener("wheel", (e) => {
+				if (this.inStage) return;
+				if (!this._imageEl || !this._imageEl.naturalWidth) return;
+
+				const now = performance.now();
+				// If the user is mid-stream panning the canvas (rapid wheel
+				// events not on this node), don't suddenly hijack just because
+				// the cursor crossed an image. Pinch (ctrlKey) is intentional
+				// and should always route to the image.
+				if (!e.ctrlKey) {
+					const sinceLast = now - lastWheelTs;
+					const sameTarget = lastWheelNode === this;
+					if (sinceLast < 120 && !sameTarget) {
+						lastWheelTs = now;
+						return; // let it bubble to scene
+					}
+				}
+				lastWheelTs = now;
+				lastWheelNode = this;
+
+				e.preventDefault();
+				e.stopPropagation();
+
+				const boxW = this.width * scene.scale;
+				const boxH = this.height * scene.scale;
+				const baseScale = this._baseScale || Math.max(
+					boxW / this._imageEl.naturalWidth,
+					boxH / this._imageEl.naturalHeight
+				);
+
+				if (e.ctrlKey) {
+					// Pinch zoom centered on the cursor
+					const rect = target.getBoundingClientRect();
+					const cursorX = e.clientX - rect.left - rect.width / 2;
+					const cursorY = e.clientY - rect.top - rect.height / 2;
+
+					const oldUserScale = this.userScale;
+					const oldTotal = baseScale * oldUserScale;
+					const newUserScale = clamp(
+						oldUserScale * Math.exp(-0.01 * e.deltaY), 1, 10
+					);
+					const newTotal = baseScale * newUserScale;
+					// Keep the image point under the cursor stationary
+					const scaleDiff = 1 / newTotal - 1 / oldTotal;
+					this.panX += cursorX * scaleDiff;
+					this.panY += cursorY * scaleDiff;
+					this.userScale = newUserScale;
+				} else {
+					// Two-finger scroll: pan the image inside its frame
+					const total = baseScale * this.userScale;
+					this.panX -= e.deltaX / total;
+					this.panY -= e.deltaY / total;
+				}
+
+				this.clampImagePan();
+				this.render();
+			}, { passive: false });
+		}
+
+		clampImagePan() {
+			if (!this._imageEl || !this._imageEl.naturalWidth) return;
+			const nw = this._imageEl.naturalWidth;
+			const nh = this._imageEl.naturalHeight;
+			const boxW = this.width * scene.scale;
+			const boxH = this.height * scene.scale;
+			const totalScale = (this._baseScale || Math.max(boxW / nw, boxH / nh)) * this.userScale;
+			// Pan is in natural-image pixels. Overhang past the box, in natural-
+			// image pixels, is (nw - boxW / totalScale) on the x axis (and y).
+			const maxX = Math.max(0, (nw - boxW / totalScale) / 2);
+			const maxY = Math.max(0, (nh - boxH / totalScale) / 2);
+			this.panX = clamp(this.panX, -maxX, maxX);
+			this.panY = clamp(this.panY, -maxY, maxY);
+		}
+
 		serialize() {
 			let render = {
 				x: this.position.x,
@@ -602,6 +761,9 @@
 				w: this.width,
 				creationScale: this.creationScale,
 				fontSize: this.fontSize,
+				userScale: this.userScale,
+				panX: this.panX,
+				panY: this.panY,
 			}
 			for (const key of Object.keys(render)) {
 				render[key] = round(render[key], 2);
@@ -613,30 +775,54 @@
 		}
 		
 		render() {
-			// Force media types to tightly wrap their content via their true ratio.
-			const isMedia = (
-				this.type === "image/jpeg" ||
-				this.type === "image/png" ||
-				this.type === "image/gif" ||
+			// PDF / video still need to keep their aspect (no cover-fit yet).
+			const ratioLocked = (
 				this.type === "application/pdf" ||
 				this.type === "video/mp4"
 			);
-			if (isMedia && this.ratio && this.width) {
+			if (ratioLocked && this.ratio && this.width) {
 				this.height = this.width / this.ratio;
 			}
 
-			const pos = scene.toViewport(this.position);
-			this.elem.style.left = pos.x + "px";
-			this.elem.style.top = pos.y + "px";
-			this.elem.style.zIndex = Math.min(this.depth, this.maxDepth);
-			this.elem.style.width = (this.width * scene.scale) + "px";
-			this.elem.style.height = (this.height * scene.scale) + "px";
+			if (!this.inStage) {
+				const pos = scene.toViewport(this.position);
+				this.elem.style.left = pos.x + "px";
+				this.elem.style.top = pos.y + "px";
+				this.elem.style.zIndex = Math.min(this.depth, this.maxDepth);
+				this.elem.style.width = (this.width * scene.scale) + "px";
+				this.elem.style.height = (this.height * scene.scale) + "px";
+			}
 			this.elem.style.borderRadius = (this.borderRadius * scene.scale) + "px";
 			//this.elem.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
+
+			// memori-style image rendering: cover the box without distortion,
+			// then apply user zoom and pan on top. A tiny epsilon avoids
+			// sub-pixel slack at the box edges from CSS rounding. Skip for
+			// stage nodes; they use simple natural-size sizing.
+			if (!this.inStage && this._imageEl && this._imageEl.naturalWidth) {
+				const boxW = this.width * scene.scale;
+				const boxH = this.height * scene.scale;
+				const nw = this._imageEl.naturalWidth;
+				const nh = this._imageEl.naturalHeight;
+				const baseScale = Math.max((boxW + 1) / nw, (boxH + 1) / nh);
+				const totalScale = baseScale * this.userScale;
+				this._baseScale = baseScale;
+				this._imageEl.style.transform =
+					`translate(-50%, -50%) scale(${totalScale}) translate(${this.panX}px, ${this.panY}px)`;
+			}
 			
 			this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
-			this.content.style.padding = (this.padding * scene.scale) + "px";
-			this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+			// Images keep square clipping and no padding regardless of zoom
+			// so their edges stay sharp at the inner image bounds.
+			const isImage = (
+				this.type === "image/jpeg" ||
+				this.type === "image/png" ||
+				this.type === "image/gif"
+			);
+			if (!isImage) {
+				this.content.style.padding = (this.padding * scene.scale) + "px";
+				this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+			}
 			this.content.style.color = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
 			this.content.style.fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
 			const highlightColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
@@ -705,18 +891,32 @@
 			let {type, path} = data;
 			
 			if (type === "image/jpeg" || type === "image/png" || type === "image/gif") {
+				// Two display modes: stage (natural shape, simple) and scene
+				// (clipping wrap + absolutely-centered img with cover transform).
+				// Initial styles are neutral; applyImageStageMode / applyImageSceneMode
+				// switch them when the node is added to one or the other.
+				const wrap = document.createElement("div");
+				// Square clipping so image edges stay sharp during pan/zoom
+				// regardless of the elem's rounded corners.
+				wrap.style.borderRadius = "0";
+
 				const img = document.createElement("img");
-				img.style.width = "100%";
 				img.style.display = "block";
+				img.style.pointerEvents = "none";
+				img.style.transformOrigin = "center center";
+				img.draggable = false;
 				img.onload = () => {
-					this.ratio = img.width / img.height;
-					if (this.width && !this.inStage) {
-						this.height = this.width / this.ratio;
-						this.render();
-					}
-				}
+					this.ratio = img.naturalWidth / img.naturalHeight;
+					this.render();
+				};
 				img.src = path;
-				return img;
+				wrap.appendChild(img);
+				this._imageEl = img;
+				this._imageWrap = wrap;
+
+				this.bindImageZoomPan(wrap);
+
+				return wrap;
 				
 			} else if (type === "audio/mpeg") {
 				const audioContainer = document.createElement("div");
@@ -880,7 +1080,8 @@
 				p.style.width = "100%";
 				p.style.height = "100%";
 				p.style.boxSizing = "border-box";
-				p.style.overflow = "hidden";
+				p.style.overflowX = "hidden";
+				p.style.overflowY = "auto";
 				p.style.margin = "0";
 
 				// Track hover so pinch gestures can target this node's font size
@@ -888,6 +1089,31 @@
 				this.elem.addEventListener("mouseleave", () => {
 					if (hoveredTextNode === this) hoveredTextNode = null;
 				});
+
+				// Scroll the text content on wheel when there's Y overflow,
+				// instead of letting the scene pan/zoom take the event. Honor
+				// the wheel-stream throttle so the cursor crossing a text node
+				// mid-pan doesn't hijack scrolling.
+				p.addEventListener("wheel", (e) => {
+					if (this.inStage) return;
+					if (e.ctrlKey) return; // pinch → font scale, handled at scene
+					const overflows = p.scrollHeight > p.clientHeight + 1;
+					if (!overflows) return;
+
+					const now = performance.now();
+					const sinceLast = now - lastWheelTs;
+					const sameTarget = lastWheelNode === this;
+					if (sinceLast < 120 && !sameTarget) {
+						lastWheelTs = now;
+						return; // let it bubble to scene
+					}
+					lastWheelTs = now;
+					lastWheelNode = this;
+
+					e.preventDefault();
+					e.stopPropagation();
+					p.scrollTop += e.deltaY;
+				}, { passive: false });
 
 				p.contentEditable = "true";
 				p.spellcheck = false;
@@ -940,7 +1166,7 @@
 					if (document.activeElement === p) {
 						p.style.cursor = "text";
 					} else {
-						p.style.cursor = "move"; // Use move cursor when not editing
+						p.style.cursor = "grab";
 					}
 				});
 				
@@ -958,6 +1184,26 @@
 				p.onkeyup = (e) => {
 					this.data.path = p.innerHTML;
 				}
+				// Auto-grow the box vertically as the user types so content
+				// doesn't disappear behind a scrollbar. Manual resize still wins
+				// (the box won't shrink on its own; the user can resize down to
+				// force scrolling).
+				p.addEventListener("input", () => {
+					this.data.path = p.innerHTML;
+					// Some browsers scroll the document to keep the contenteditable
+					// caret in view; we manage view ourselves via the scene origin,
+					// so undo any such shift.
+					document.documentElement.scrollTop = 0;
+					document.documentElement.scrollLeft = 0;
+					document.body.scrollTop = 0;
+					document.body.scrollLeft = 0;
+					if (this.inStage) return;
+					const needed = p.scrollHeight / scene.scale;
+					if (needed > this.height) {
+						this.height = needed;
+						this.render();
+					}
+				});
 				return p;
 			} else if (type === "dir") {
 				const p = document.createElement("p");
@@ -1007,6 +1253,7 @@
 
 			this.dragging = true;
 			this.click = new Vec({x: e.clientX, y: e.clientY});
+			document.body.classList.add("grabbing");
 
 			if (this.inStage) {
 				// Position on scene
@@ -1138,6 +1385,7 @@
 				this.render();
 				this.depth = 1;
 			}
+			document.body.classList.remove("grabbing");
 			document.removeEventListener('mousemove', this.boundMouseMove);
 			document.removeEventListener('mouseup', this.boundMouseUp);
 		}
@@ -1199,6 +1447,7 @@
 			node.elem.classList.add("nodeInScene");
 			this.elem.appendChild(node.elem);
 			this.children.push(node);
+			if (node.applyImageSceneMode) node.applyImageSceneMode();
 			node.render();
 			node.setAutoplay();
 			node.setupAudioNodes();
@@ -1233,6 +1482,8 @@
 		
 		wheel(e) {
 			e.preventDefault();
+			lastWheelTs = performance.now();
+			lastWheelNode = null;
 
 			if (e.ctrlKey) {
 				// Pinch on a text node: scale its font, not the canvas
@@ -1469,13 +1720,22 @@
 				render: {
 					x: pos.x,
 					y: pos.y,
-					w: 600 / scene.scale,
-					h: 16 / scene.scale,
+					// Small starting width; height will auto-grow as the user types.
+					w: 400 / scene.scale,
+					h: 42 / scene.scale,
 					z: 4,
 					creationScale: scene.scale,
 				},
 			});
 			scene.addNode(node);
+			// Snap height to whatever the empty <p> actually needs after layout
+			requestAnimationFrame(() => {
+				const needed = node.content.scrollHeight / scene.scale;
+				if (needed > 0) {
+					node.height = needed;
+					node.render();
+				}
+			});
 			
 			// Focus and make the new node editable
 			setTimeout(() => {
@@ -1502,8 +1762,9 @@
 			this.elem.appendChild(node.elem);
 			this.children.push(node);
 			if (node.showHandles) node.showHandles(false);
+			if (node.applyImageStageMode) node.applyImageStageMode();
 		}
-		
+
 		removeNode(node) {
 			node.inStage = false;
 			node.elem.classList.remove("nodeInStage");
