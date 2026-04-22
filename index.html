@@ -1793,8 +1793,8 @@
 		addNode(node) {
 			node.inStage = true;
 			node.elem.classList.add("nodeInStage");
-			this.elem.appendChild(node.elem);
-			this.children.push(node);
+			this.elem.insertBefore(node.elem, this.elem.firstChild);
+			this.children.unshift(node);
 			if (node.showHandles) node.showHandles(false);
 			if (node.applyImageStageMode) node.applyImageStageMode();
 		}
@@ -1973,8 +1973,7 @@
 			updateFavicon();
 		}
 		
-		// Populate stage with listing
-		files.map(d => {
+		[...files].reverse().forEach(d => {
 			stage.addNode(new Node({
 				data: d,
 				render: { x: 0, y: 0, z: 4, },

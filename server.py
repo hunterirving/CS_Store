@@ -64,16 +64,22 @@ def pwd():
 	}]
 
 	listing = os.listdir(FILE_PATH)
+	# Sort by modification time, newest first, so recently added files
+	# appear at the top of the stage.
+	listing.sort(
+		key=lambda f: os.path.getmtime(os.path.join(FILE_PATH, f)),
+		reverse=True,
+	)
 	for f in listing:
 		t = mimetypes.guess_type(f)[0]
 		if t in VALID_TYPES:
-			files.append({ 
+			files.append({
 				"type": t,
-				"path": f"/files/{f}", 
+				"path": f"/files/{f}",
 			})
 		elif os.path.isdir(f) and f[0] != ".":
 			files.append({
-				"type": "dir", 
+				"type": "dir",
 				"path": f,
 				"absolute": os.path.join(FILE_PATH, f)
 			})
@@ -118,10 +124,13 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 				ext = mimetypes.guess_extension(mime) or ".png"
 				if ext == ".jpe":
 					ext = ".jpg"
-				filename = f"pasted_{int(time.time() * 1000)}{ext}"
+				now = time.time()
+				filename = f"pasted_{int(now * 1000)}{ext}"
 				dest = os.path.join(FILE_PATH, filename)
 				with open(dest, "wb") as f:
 					f.write(base64.b64decode(message["data"]))
+
+				os.utime(dest, (now, now))
 				logger.info(f"Saved pasted image to {dest}")
 				self.write_message(json.dumps({
 					"type": "image_saved",
