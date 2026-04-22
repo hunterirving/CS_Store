@@ -1251,6 +1251,40 @@
 				return;
 			}
 
+			// Cmd+click on a scene node: duplicate it with the same attributes
+			// and start dragging the new copy so it follows the cursor.
+			if (e.metaKey && !this.inStage && !e.shiftKey) {
+				const offset = 20 / scene.scale;
+				const copy = new this.constructor({
+					data: { ...this.data },
+					render: {
+						x: this.position.x + offset,
+						y: this.position.y + offset,
+						z: 4,
+						w: this.width,
+						h: this.height,
+						creationScale: this.creationScale,
+						fontSize: this.fontSize,
+						userScale: this.userScale,
+						panX: this.panX,
+						panY: this.panY,
+					},
+				});
+				scene.addNode(copy);
+
+				scene.clearSelection();
+				scene.selectNode(copy);
+
+				copy.dragging = true;
+				copy.click = new Vec({ x: e.clientX, y: e.clientY });
+				copy.depth = 4;
+				copy.render();
+				document.body.classList.add("grabbing");
+				document.addEventListener('mousemove', copy.boundMouseMove);
+				document.addEventListener('mouseup', copy.boundMouseUp);
+				return;
+			}
+
 			this.dragging = true;
 			this.click = new Vec({x: e.clientX, y: e.clientY});
 			document.body.classList.add("grabbing");
