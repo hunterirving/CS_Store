@@ -326,6 +326,9 @@
 	});
 	
 	pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/deps/pdf.worker.js';
+
+	// Currently hovered text node (used to redirect pinch-zoom to font scaling)
+	let hoveredTextNode = null;
 	const clamp = (x, min, max) =>
 	Math.min(Math.max(x, min), max)
 	
@@ -377,8 +380,8 @@
 	
 	class Node {
 		constructor({ render, data }) {
-			const { 
-				x, y, z, w = null, h = null, creationScale,
+			const {
+				x, y, z, w = null, h = null, creationScale, fontSize = null,
 			} = render;
 			
 			this.data = data;
@@ -405,7 +408,7 @@
 			this.ratio = w / h;
 			this.creationScale = creationScale;
 			this.padding = 8 / creationScale;
-			this.fontSize = 26 / creationScale;
+			this.fontSize = fontSize !== null ? fontSize : 26 / creationScale;
 			this.borderRadius = 5 / creationScale;
 			
 			// Populate div and set ratio
@@ -424,6 +427,170 @@
 				document.addEventListener('mouseup', this.boundMouseUp);
 				this.mousedown(e)
 			});
+
+			// Resize handles (only meaningful for resizable types; skipped for dirs)
+			this.resizing = null;
+			this.handles = [];
+			if (this.type !== "dir") {
+				this.createResizeHandles();
+			}
+		}
+
+		createResizeHandles() {
+			// Handles are centered on the node's edges/corners so their hitbox
+			// extends equally outward (past the selection outline) and inward.
+			// Corners are square; edges stretch between the corner footprints.
+			const T = 24; // total thickness of edge / corner handles, in px
+			const positions = [
+				{ name: "nw", cursor: "nwse-resize", corner: true  },
+				{ name: "ne", cursor: "nesw-resize", corner: true  },
+				{ name: "se", cursor: "nwse-resize", corner: true  },
+				{ name: "sw", cursor: "nesw-resize", corner: true  },
+				{ name: "n",  cursor: "ns-resize",   corner: false },
+				{ name: "s",  cursor: "ns-resize",   corner: false },
+				{ name: "e",  cursor: "ew-resize",   corner: false },
+				{ name: "w",  cursor: "ew-resize",   corner: false },
+			];
+			for (const p of positions) {
+				const h = document.createElement("div");
+				h.style.position = "absolute";
+				h.style.cursor = p.cursor;
+				h.style.zIndex = "10";
+				h.style.display = "none";
+				h.dataset.handle = p.name;
+				h.dataset.corner = p.corner ? "1" : "0";
+
+				if (p.corner) {
+					h.style.width = T + "px";
+					h.style.height = T + "px";
+					h.style.left = (p.name.includes("w") ? `-${T / 2}px` : `calc(100% - ${T / 2}px)`);
+					h.style.top  = (p.name.includes("n") ? `-${T / 2}px` : `calc(100% - ${T / 2}px)`);
+				} else if (p.name === "n" || p.name === "s") {
+					h.style.height = T + "px";
+					h.style.left = `${T / 2}px`;
+					h.style.right = `${T / 2}px`;
+					h.style.top = (p.name === "n" ? `-${T / 2}px` : `calc(100% - ${T / 2}px)`);
+				} else { // e or w
+					h.style.width = T + "px";
+					h.style.top = `${T / 2}px`;
+					h.style.bottom = `${T / 2}px`;
+					h.style.left = (p.name === "w" ? `-${T / 2}px` : `calc(100% - ${T / 2}px)`);
+				}
+
+				h.addEventListener("mousedown", (e) => this.resizeStart(e, p));
+				this.elem.appendChild(h);
+				this.handles.push(h);
+			}
+		}
+
+		showHandles(show) {
+			for (const h of this.handles) h.style.display = show ? "block" : "none";
+		}
+
+		resizeStart(e, handle) {
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.altKey) return;
+
+			this.resizing = {
+				handle: handle,
+				startMouse: new Vec({ x: e.clientX, y: e.clientY }),
+				startPos: new Vec({ x: this.position.x, y: this.position.y }),
+				startW: this.width,
+				startH: this.height,
+				startFontSize: this.fontSize,
+				ratio: (this.width && this.height) ? this.width / this.height : this.ratio,
+			};
+
+			const onMove = (ev) => this.resizeMove(ev);
+			const onUp = (ev) => {
+				this.resizing = null;
+				document.removeEventListener("mousemove", onMove);
+				document.removeEventListener("mouseup", onUp);
+			};
+			document.addEventListener("mousemove", onMove);
+			document.addEventListener("mouseup", onUp);
+		}
+
+		resizeMove(e) {
+			if (!this.resizing) return;
+			e.preventDefault();
+
+			const r = this.resizing;
+			// Mouse delta in absolute (scene) coordinates
+			const dxAbs = (e.clientX - r.startMouse.x) / scene.scale;
+			const dyAbs = (e.clientY - r.startMouse.y) / scene.scale;
+
+			const name = r.handle.name;
+			const movesLeft = name.includes("w");
+			const movesTop  = name.includes("n");
+			const affectsX  = name.includes("e") || name.includes("w");
+			const affectsY  = name.includes("n") || name.includes("s");
+
+			let newW = r.startW;
+			let newH = r.startH;
+			let newX = r.startPos.x;
+			let newY = r.startPos.y;
+
+			if (affectsX) {
+				if (movesLeft) {
+					newW = r.startW - dxAbs;
+					newX = r.startPos.x + dxAbs;
+				} else {
+					newW = r.startW + dxAbs;
+				}
+			}
+			if (affectsY) {
+				if (movesTop) {
+					newH = r.startH - dyAbs;
+					newY = r.startPos.y + dyAbs;
+				} else {
+					newH = r.startH + dyAbs;
+				}
+			}
+
+			// Always preserve aspect ratio for media types.
+			// Edge handles drive only one axis, so derive the other from the ratio.
+			const lockAspect = (
+				this.type === "image/jpeg" ||
+				this.type === "image/png" ||
+				this.type === "image/gif" ||
+				this.type === "application/pdf" ||
+				this.type === "video/mp4"
+			);
+			if (lockAspect && r.ratio) {
+				let scale;
+				if (r.handle.corner) {
+					// Pick the axis the user pushed harder
+					const wScale = newW / r.startW;
+					const hScale = newH / r.startH;
+					scale = Math.abs(wScale - 1) > Math.abs(hScale - 1) ? wScale : hScale;
+				} else if (affectsX) {
+					scale = newW / r.startW;
+				} else {
+					scale = newH / r.startH;
+				}
+				newW = r.startW * scale;
+				newH = r.startH * scale;
+				if (movesLeft) newX = r.startPos.x + (r.startW - newW);
+				if (movesTop)  newY = r.startPos.y + (r.startH - newH);
+			}
+
+			// Clamp to a small minimum so we can't invert
+			const minSize = 10 / scene.scale;
+			if (newW < minSize) {
+				if (movesLeft) newX -= (minSize - newW);
+				newW = minSize;
+			}
+			if (newH < minSize) {
+				if (movesTop) newY -= (minSize - newH);
+				newH = minSize;
+			}
+
+			this.width = newW;
+			this.height = newH;
+			this.position = new Vec({ x: newX, y: newY });
+			this.render();
 		}
 		
 		serialize() {
@@ -434,6 +601,7 @@
 				h: this.height,
 				w: this.width,
 				creationScale: this.creationScale,
+				fontSize: this.fontSize,
 			}
 			for (const key of Object.keys(render)) {
 				render[key] = round(render[key], 2);
@@ -445,6 +613,18 @@
 		}
 		
 		render() {
+			// Force media types to tightly wrap their content via their true ratio.
+			const isMedia = (
+				this.type === "image/jpeg" ||
+				this.type === "image/png" ||
+				this.type === "image/gif" ||
+				this.type === "application/pdf" ||
+				this.type === "video/mp4"
+			);
+			if (isMedia && this.ratio && this.width) {
+				this.height = this.width / this.ratio;
+			}
+
 			const pos = scene.toViewport(this.position);
 			this.elem.style.left = pos.x + "px";
 			this.elem.style.top = pos.y + "px";
@@ -527,8 +707,13 @@
 			if (type === "image/jpeg" || type === "image/png" || type === "image/gif") {
 				const img = document.createElement("img");
 				img.style.width = "100%";
+				img.style.display = "block";
 				img.onload = () => {
 					this.ratio = img.width / img.height;
+					if (this.width && !this.inStage) {
+						this.height = this.width / this.ratio;
+						this.render();
+					}
 				}
 				img.src = path;
 				return img;
@@ -689,7 +874,21 @@
 				p.innerHTML = path || "";
 				p.classList.add("textNode");
 				this.ratio = 5;
-				
+
+				// Make the <p> fill the node box so the visible bounds match the
+				// elem (which is what resize handles position against).
+				p.style.width = "100%";
+				p.style.height = "100%";
+				p.style.boxSizing = "border-box";
+				p.style.overflow = "hidden";
+				p.style.margin = "0";
+
+				// Track hover so pinch gestures can target this node's font size
+				this.elem.addEventListener("mouseenter", () => { hoveredTextNode = this; });
+				this.elem.addEventListener("mouseleave", () => {
+					if (hoveredTextNode === this) hoveredTextNode = null;
+				});
+
 				p.contentEditable = "true";
 				p.spellcheck = false;
 
@@ -1004,6 +1203,7 @@
 			node.setAutoplay();
 			node.setupAudioNodes();
 			node.updateAudioSpatialization();
+			if (node.showHandles) node.showHandles(true);
 		}
 		
 		removeNode(node) {
@@ -1033,11 +1233,19 @@
 		
 		wheel(e) {
 			e.preventDefault();
-			
+
 			if (e.ctrlKey) {
+				// Pinch on a text node: scale its font, not the canvas
+				if (hoveredTextNode) {
+					const factor = Math.exp(-0.01 * e.deltaY);
+					hoveredTextNode.fontSize = clamp(hoveredTextNode.fontSize * factor, 1, 10000);
+					hoveredTextNode.render();
+					return;
+				}
+
 				const pointer = new Vec({x: e.clientX, y: e.clientY});
 				const a = this.toAbsolute(pointer);
-				
+
 				this.scale = clamp(this.scale - 0.01 * e.deltaY, 0.1, 3.0);
 				
 				// Re-position so mouse remains where it was
@@ -1062,9 +1270,18 @@
 		
 		gesturechange(e) {
 			e.preventDefault();
+
+			// Pinch on a text node: scale its font, not the canvas
+			if (hoveredTextNode) {
+				const factor = 1 + 0.2 * (e.scale - 1);
+				hoveredTextNode.fontSize = clamp(hoveredTextNode.fontSize * factor, 1, 10000);
+				hoveredTextNode.render();
+				return;
+			}
+
 			const pointer = new Vec({x: e.clientX, y: e.clientY});
 			const a = this.toAbsolute(pointer);
-			
+
 			// Resize the canvas
 			const factor = 1 + 0.2 * (e.scale - 1);
 			this.scale = clamp(this.scale * factor, 0.1, 3.0);
@@ -1284,6 +1501,7 @@
 			node.elem.classList.add("nodeInStage");
 			this.elem.appendChild(node.elem);
 			this.children.push(node);
+			if (node.showHandles) node.showHandles(false);
 		}
 		
 		removeNode(node) {
