@@ -16,6 +16,7 @@ SRC_PATH = os.path.dirname(__file__)
 VALID_TYPES = [
 	"image/png",
 	"image/jpeg",
+	"image/gif",
 	"video/mp4",
 	"application/pdf",
 	"audio/mpeg"

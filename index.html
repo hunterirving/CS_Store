@@ -524,7 +524,7 @@
 		populateContent(data) {
 			let {type, path} = data;
 			
-			if (type === "image/jpeg" || type === "image/png") {
+			if (type === "image/jpeg" || type === "image/png" || type === "image/gif") {
 				const img = document.createElement("img");
 				img.style.width = "100%";
 				img.onload = () => {
