@@ -1412,6 +1412,15 @@
 			// If we get a message, we're connected, so reset reconnect attempts
 			reconnectAttempts = 0;
 			notification.hide();
+
+			// Intercept replies to pasted-image saves; they don't reset the canvas
+			let _early;
+			try { _early = JSON.parse(e.data); } catch (_) {}
+			if (_early && _early.type === "image_saved") {
+				handlePastedImageSaved(_early);
+				return;
+			}
+
 		resetCanvas();
 		const {files, layout, path, theme} = JSON.parse(e.data);
 		
@@ -1532,6 +1541,91 @@
 	
 	// Initial setup of handlers
 	setupWebSocketHandlers();
+
+	// Track cursor so paste events can be positioned under it
+	let lastMouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+	document.addEventListener("mousemove", (e) => {
+		lastMouse.x = e.clientX;
+		lastMouse.y = e.clientY;
+	});
+
+	// Pending paste requests waiting for server confirmation
+	const pendingPastes = {};
+
+	function handlePastedImageSaved(parsed) {
+		const pending = pendingPastes[parsed.requestId];
+		if (!pending) return;
+		delete pendingPastes[parsed.requestId];
+
+		const mime = parsed.mime || "image/png";
+		const probe = new Image();
+		probe.onload = () => {
+			const ratio = probe.width / probe.height;
+			const targetPx = 400;
+			const w = (ratio >= 1 ? targetPx : targetPx * ratio) / pending.creationScale;
+			const h = w / ratio;
+			// Center the new node on the cursor position
+			const node = new Node({
+				data: { type: mime, path: parsed.path },
+				render: {
+					x: pending.x - w / 2,
+					y: pending.y - h / 2,
+					z: 4,
+					w: w,
+					h: h,
+					creationScale: pending.creationScale,
+				},
+			});
+			scene.addNode(node);
+
+			stage.addNode(new Node({
+				data: { type: mime, path: parsed.path },
+				render: { x: 0, y: 0, z: 4 },
+			}));
+		};
+		probe.src = parsed.path;
+	}
+
+	// Listen for image data on the clipboard
+	document.addEventListener("paste", (e) => {
+		if (!e.clipboardData) return;
+		const items = e.clipboardData.items;
+		if (!items) return;
+
+		for (const item of items) {
+			if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+
+			const file = item.getAsFile();
+			if (!file) continue;
+
+			e.preventDefault();
+
+			const reader = new FileReader();
+			reader.onload = () => {
+				const result = reader.result;
+				const comma = result.indexOf(",");
+				const b64 = comma >= 0 ? result.slice(comma + 1) : result;
+
+				const requestId = `paste_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+				const absPos = scene.toAbsolute(new Vec({ x: lastMouse.x, y: lastMouse.y }));
+
+				pendingPastes[requestId] = {
+					x: absPos.x,
+					y: absPos.y,
+					creationScale: scene.scale,
+				};
+
+				ws.send(JSON.stringify({
+					type: "save_image",
+					mime: item.type,
+					data: b64,
+					requestId: requestId,
+				}));
+			};
+			reader.readAsDataURL(file);
+			break;
+		}
+	});
 
 	function updateAllAudioSpatialization() {
 		scene.children.forEach(node => {

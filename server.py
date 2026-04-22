@@ -2,6 +2,8 @@ import os
 import mimetypes
 import json
 import logging
+import base64
+import time
 import tornado.ioloop
 import tornado.web
 import tornado.websocket
@@ -109,6 +111,28 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 			layout, _ = load_layout_and_theme()
 			save_layout(layout, self.current_theme)
 			logger.info(f"Received and saved new theme: {self.current_theme}")
+
+		elif message["type"] == "save_image":
+			try:
+				mime = message.get("mime", "image/png")
+				ext = mimetypes.guess_extension(mime) or ".png"
+				if ext == ".jpe":
+					ext = ".jpg"
+				filename = f"pasted_{int(time.time() * 1000)}{ext}"
+				dest = os.path.join(FILE_PATH, filename)
+				with open(dest, "wb") as f:
+					f.write(base64.b64decode(message["data"]))
+				logger.info(f"Saved pasted image to {dest}")
+				self.write_message(json.dumps({
+					"type": "image_saved",
+					"path": f"/files/{filename}",
+					"mime": mime,
+					"x": message.get("x"),
+					"y": message.get("y"),
+					"requestId": message.get("requestId"),
+				}))
+			except Exception as e:
+				logger.error(f"Error saving pasted image: {str(e)}")
 
 		elif message["type"] == "cd":
 			FILE_PATH = message["path"]

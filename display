@@ -1,6 +1,6 @@
 #!/bin/sh
 
-python3 ~/dev/CS_Store/server.py "$PWD" &
+~/dev/CS_Store/venv/bin/python ~/dev/CS_Store/server.py "$PWD" &
 PID=$!
 trap "kill $PID" EXIT
 echo 'CTRL + C to kill'
