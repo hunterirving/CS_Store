@@ -141,7 +141,7 @@
 		overflow-y: auto;
 		overscroll-behavior: none;
 		scrollbar-width: none;
-		z-index: 2;
+		z-index: 2147483647;
 		background-color: var(--background);
 		box-shadow: -2px 0 5px rgba(0, 0, 0, 0.15);
 	}
@@ -217,6 +217,16 @@
 		audioContext = new (window.AudioContext || window.webkitAudioContext)();
 		masterGain = audioContext.createGain();
 		masterGain.connect(audioContext.destination);
+	}
+
+	function stopOtherMedia(current) {
+		for (const el of document.querySelectorAll("audio, video")) {
+			if (el === current) continue;
+			if (!el.paused) {
+				el.pause();
+				el.currentTime = 0;
+			}
+		}
 	}
 
 	// Utility functions for audio spatialization
@@ -463,7 +473,7 @@
 			// Resize handles (only meaningful for resizable types; skipped for dirs)
 			this.resizing = null;
 			this.handles = [];
-			if (this.type !== "dir") {
+			if (this.type !== "dir" && this.type !== "audio/mpeg") {
 				this.createResizeHandles();
 			}
 		}
@@ -827,7 +837,7 @@
 					`translate(-50%, -50%) scale(${totalScale}) translate(${this.panX}px, ${this.panY}px)`;
 			}
 			
-			this.content.style.fontSize = Math.floor(this.fontSize * scene.scale) + "px";
+			this.content.style.fontSize = (this.fontSize * scene.scale) + "px";
 			// Images keep square clipping and no padding regardless of zoom
 			// so their edges stay sharp at the inner image bounds.
 			const isImage = (
@@ -945,6 +955,7 @@
 				audio.preload = "auto";
 				audio.controls = true;
 				audio.src = path;
+				audio.addEventListener("play", () => stopOtherMedia(audio));
 
 				const label = document.createElement("div");
 				label.textContent = path.split('/').pop(); // Display filename
@@ -972,6 +983,7 @@
 				video.preload = "auto";
 				video.controls = true;
 				video.src = path;
+				video.addEventListener("play", () => stopOtherMedia(video));
 				
 				// Only stop propagation for video controls when playing
 				video.addEventListener("mousedown", e => {
