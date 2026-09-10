@@ -1,39 +1,6 @@
 <title>CS_Store</title>
 <link id="favicon" rel="icon" href="">
 <style>
-	/* custom colors */
-	:root {
-		--coconut: #ffffff;
-		--licorice: #000000;
-		--wasabi: #ccff00;
-		--eggplant: #7700ff;
-
-		--murk: #8e9918;
-		--tadpole: #27350f;
-		--lilypad: #6f8823;
-		--reed: #4a5d23;
-
-		--pollen: #f4a127;
-		--loam: #5a352b;
-		--chlorophyll: #5aa83b;
-		--terracotta: #b15c2e;
-
-		--wheat: #d2c3a3;
-		--earth: #4a3c31;
-		--pumpkin: #cb7c52;
-		--tobacco: #7d6c55;
-
-		--moss: #20302f;
-		--goat-milk: #d8d3c9;
-		--burl: #231f20;
-		--flame: #c63728;
-
-		--soot: #181a1b;
-		--smoke: #e8e6e3;
-		--ash: #252829;
-		--cinder: #ff5532;
-	}
-
 	/* fonts */
 	@font-face {
 		font-family: BasteleurMoonlight;
@@ -41,51 +8,15 @@
 	}
 
 	:root {
-		--font-family: monospace;
-	}
+		--soot: #181a1b;
+		--smoke: #e8e6e3;
+		--ash: #252829;
+		--cinder: #ff5532;
 
-	/* themes */
-	:root[data-theme="woodstove"] {
 		--background: var(--soot);
 		--text: var(--smoke);
 		--highlight: var(--ash);
 		--accent: var(--cinder);
-		--font-family: BasteleurMoonlight;
-	}
-
-	:root[data-theme="gak"] {
-		--background: var(--coconut);
-		--text: var(--licorice);
-		--highlight: var(--wasabi);
-		--accent: var(--eggplant);
-	}
-
-	:root[data-theme="swamp"] {
-		--background: var(--murk);
-		--text: var(--tadpole);
-		--highlight: var(--lilypad);
-		--accent: var(--reed);
-	}
-
-	:root[data-theme="sunflower"] {
-		--background: var(--pollen);
-		--text: var(--loam);
-		--highlight: var(--chlorophyll);
-		--accent: var(--terracotta);
-	}
-
-	:root[data-theme="harvest"] {
-		--background: var(--wheat);
-		--text: var(--earth);
-		--highlight: var(--pumpkin);
-		--accent: var(--tobacco);
-	}
-
-	:root[data-theme="medieval"] {
-		--background: var(--moss);
-		--text: var(--goat-milk);
-		--highlight: var(--burl);
-		--accent: var(--flame);
 		--font-family: BasteleurMoonlight;
 	}
 
@@ -135,6 +66,7 @@
 		position: absolute;
 		top: 0;
 		right: 0;
+		transition: transform 0.15s ease;
 		width: 95px;
 		height: 100vh;
 		overflow-x: hidden;
@@ -144,6 +76,10 @@
 		z-index: 2147483647;
 		background-color: var(--background);
 		box-shadow: -2px 0 5px rgba(0, 0, 0, 0.15);
+	}
+
+	#stage.closed {
+		transform: translateX(100%);
 	}
 
 	#stage::-webkit-scrollbar {
@@ -282,37 +218,6 @@
 		}
 	}
 
-	// Theme stuff
-	let themes = [];
-	let currentThemeIndex = 0;
-	let isF2Pressed = false;
-
-	function extractThemesFromCSS() {
-		const styleSheets = document.styleSheets;
-		for (let i = 0; i < styleSheets.length; i++) {
-			const rules = styleSheets[i].cssRules || styleSheets[i].rules;
-			for (let j = 0; j < rules.length; j++) {
-				const rule = rules[j];
-				if (rule.selectorText && rule.selectorText.startsWith(':root[data-theme=')) {
-					const theme = rule.selectorText.match(/data-theme="([^"]+)"/)[1];
-					themes.push(theme);
-				}
-			}
-		}
-	}
-
-	function updateNodeStyles() {
-		const highlightColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
-		const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
-		const fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
-
-		scene.children.forEach(node => {
-			// node.elem.style.backgroundColor = highlightColor;
-			node.content.style.color = textColor;
-			node.content.style.fontFamily = fontFamily;
-		});
-	}
-
 	function updateFavicon() {
 		const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--background').trim();
 		const svgContent = `
@@ -324,44 +229,14 @@
 		favicon.href = `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
 	}
 
-	function cycleTheme() {
-		currentThemeIndex = (currentThemeIndex + 1) % themes.length;
-		const newTheme = themes[currentThemeIndex];
-		document.documentElement.setAttribute('data-theme', newTheme);
-		updateNodeStyles();
-		updateFavicon();
-
-		// Send the new theme to the server
-		ws.send(JSON.stringify({
-			"type": "save_theme",
-			"theme": newTheme
-		}));
-	}
-
 	document.addEventListener('keydown', function(event) {
-		if (event.key === 'F2' && !isF2Pressed) {
+		if (event.key === 'F2' && !event.repeat) {
 			event.preventDefault();
-			isF2Pressed = true;
-			cycleTheme();
+			stage.toggle();
 		}
 	});
-
-	document.addEventListener('keyup', function(event) {
-		if (event.key === 'F2') {
-			isF2Pressed = false;
-		}
-	});
-
-	function setInitialTheme() {
-		extractThemesFromCSS();
-		if (themes.length > 0) {
-			document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
-			updateNodeStyles();
-		}
-	}
 
 	window.addEventListener('load', function() {
-		setInitialTheme();
 		updateFavicon();
 	});
 	
@@ -1878,6 +1753,10 @@
 			this.children.splice(idx, 1);
 		}
 		
+		toggle() {
+			this.elem.classList.toggle("closed");
+		}
+
 		inStage(v) {
 			const bbox = this.elem.getBoundingClientRect();
 			return (
@@ -2006,7 +1885,7 @@
 			}
 
 		resetCanvas();
-		const {files, layout, path, theme} = JSON.parse(e.data);
+		const {files, layout, path} = JSON.parse(e.data);
 		
 		// Create title
 		const p = document.createElement("p");
@@ -2035,14 +1914,6 @@
 		}
 		document.body.appendChild(p);
 
-		// Set the theme
-		if (theme) {
-			currentThemeIndex = themes.indexOf(theme);
-			if (currentThemeIndex === -1) currentThemeIndex = 0;  // fallback to first theme if not found
-			document.documentElement.setAttribute('data-theme', themes[currentThemeIndex]);
-			updateNodeStyles();
-			updateFavicon();
-		}
 		
 		[...files].reverse().forEach(d => {
 			stage.addNode(new Node({
