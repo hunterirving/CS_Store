@@ -11,12 +11,12 @@
 		--soot: #181a1b;
 		--smoke: #e8e6e3;
 		--ash: #252829;
-		--cinder: #ff5532;
+		--eggshell: #83c7dc;
 
 		--background: var(--soot);
 		--text: var(--smoke);
 		--highlight: var(--ash);
-		--accent: var(--cinder);
+		--accent: var(--eggshell);
 		--font-family: BasteleurMoonlight;
 	}
 
@@ -31,11 +31,13 @@
 		color: var(--text);
 		font-family: var(--font-family);
 		font-size: 12px;
+		position: fixed;
+		top: 0;
+		left: 0;
 		width: 100%;
 		height: 100%;
 		margin: 0px;
-		overflow-y: hidden;
-		overflow-x: hidden;
+		overflow: hidden;
 	}
 
 	#path {
@@ -57,6 +59,7 @@
 		left: 0px;
 		width: 100%;
 		height: 100%;
+		overflow: hidden;
 		background-image: linear-gradient(to right, var(--highlight) 1px, transparent 1px),
 						  linear-gradient(to bottom, var(--highlight) 1px, transparent 1px);
 		background-color: var(--background);
@@ -66,7 +69,6 @@
 		position: absolute;
 		top: 0;
 		right: 0;
-		transition: transform 0.15s ease;
 		width: 95px;
 		height: 100vh;
 		overflow-x: hidden;
@@ -76,6 +78,10 @@
 		z-index: 2147483647;
 		background-color: var(--background);
 		box-shadow: -2px 0 5px rgba(0, 0, 0, 0.15);
+	}
+
+	#stage.animated {
+		transition: transform 0.15s ease;
 	}
 
 	#stage.closed {
@@ -131,6 +137,33 @@
 
 	body.linkModifier .textNode a {
 		cursor: pointer;
+	}
+
+	.linkFrameBox {
+		flex: 1 1 auto;
+		position: relative;
+		overflow: hidden;
+	}
+
+	.linkFrame {
+		position: absolute;
+		left: 0;
+		top: 0;
+		border: none;
+		transform-origin: 0 0;
+		background-color: var(--background);
+		pointer-events: none;
+	}
+
+	.linkFrameBox.active .linkFrame {
+		pointer-events: auto;
+	}
+
+	body.grabbing .linkFrameBox.active .linkFrame,
+	body.resizing .linkFrameBox.active .linkFrame,
+	body.selecting .linkFrameBox.active .linkFrame,
+	body.linkModifier .linkFrameBox.active .linkFrame {
+		pointer-events: none;
 	}
 
 	.dirNode {
@@ -230,7 +263,7 @@
 	}
 
 	document.addEventListener('keydown', function(event) {
-		if (event.key === 'F2' && !event.repeat) {
+		if (event.key === 'F1' && !event.repeat) {
 			event.preventDefault();
 			stage.toggle();
 		}
@@ -299,24 +332,20 @@
 		}
 	}
 	
+	const linkFrameAspect = 3 / 4;
+	const frameScrollbarWidth = 20;
+
 	function resolveLinkHref(href) {
 		const trimmed = href.trim();
 		if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || /^[/#]/.test(trimmed)) return trimmed;
 		return "https://" + trimmed;
 	}
 
-	function renderTextSource(p, source) {
-		p.innerHTML = source;
-		for (const link of p.querySelectorAll("a")) {
-			link.setAttribute("href", resolveLinkHref(link.getAttribute("href") || ""));
-		}
-	}
-
 	class Node {
 		constructor({ render, data }) {
 			const {
 				x, y, z, w = null, h = null, creationScale, fontSize = null,
-				userScale = 1, panX = 0, panY = 0,
+				userScale = 1, panX = 0, panY = 0, frameZoom = null,
 			} = render;
 			
 			this.data = data;
@@ -324,6 +353,7 @@
 			this.path = data.path;
 			this.inStage = false;
 			this.elem = document.createElement("div");
+			this.linkFrame = null;
 			this.audioSource = null;
 			this.gainNode = null;
 			this.panNode = null;
@@ -344,6 +374,7 @@
 			this.creationScale = creationScale;
 			this.padding = 8 / creationScale;
 			this.fontSize = fontSize !== null ? fontSize : 26 / creationScale;
+			this.frameZoom = frameZoom !== null ? frameZoom : 1 / creationScale;
 			this.borderRadius = 0;
 
 			// Image zoom-to-crop / pan state (used by image types only)
@@ -354,9 +385,11 @@
 			// Populate div and set ratio
 			this.content = this.populateContent(data);
 			this.elem.appendChild(this.content);
+			if (this.type === "text") this.renderText();
 			
 			// Interaction helpers
 			this.dragging = false;
+			this.didDrag = false;
 			this.click = null;
 			
 			this.boundMouseMove = (e) => this.mousemove(e);
@@ -423,6 +456,86 @@
 			}
 		}
 
+		renderText(sizeNewFrame) {
+			this.content.innerHTML = this.data.path;
+			for (const link of this.content.querySelectorAll("a")) {
+				link.setAttribute("href", resolveLinkHref(link.getAttribute("href") || ""));
+			}
+			this.syncLinkFrame(sizeNewFrame);
+		}
+
+		syncLinkFrame(sizeNewFrame) {
+			const links = this.content.querySelectorAll("a");
+			const sole = links.length === 1 && this.content.textContent.trim() === links[0].textContent.trim();
+
+			if (!sole) {
+				if (this.linkFrame) {
+					this.linkFrame.parentElement.remove();
+					this.linkFrame = null;
+					this.elem.style.display = "";
+					this.elem.style.flexDirection = "";
+					this.content.style.height = "100%";
+					this.content.style.flex = "";
+				}
+				return;
+			}
+
+			if (!this.linkFrame) {
+				const box = document.createElement("div");
+				box.classList.add("linkFrameBox");
+				this.linkFrame = document.createElement("iframe");
+				this.linkFrame.classList.add("linkFrame");
+				box.appendChild(this.linkFrame);
+				box.addEventListener("click", () => {
+					if (!this.didDrag) box.classList.add("active");
+				});
+				box.addEventListener("wheel", (e) => {
+					if (e.ctrlKey) return; // pinch → frame zoom, handled at scene
+
+					const now = performance.now();
+					if (now - lastWheelTs < 120 && lastWheelNode !== this) {
+						lastWheelTs = now;
+						return; // let it bubble to scene
+					}
+					lastWheelTs = now;
+					lastWheelNode = this;
+
+					// Hand the wheel stream to the page itself; it stays live
+					// until the pointer leaves the node.
+					e.preventDefault();
+					e.stopPropagation();
+					box.classList.add("active");
+				}, { passive: false });
+				this.elem.appendChild(box);
+				this.elem.style.display = "flex";
+				this.elem.style.flexDirection = "column";
+				this.content.style.height = "auto";
+				this.content.style.flex = "0 0 auto";
+				if (sizeNewFrame) {
+					this.height = this.content.offsetHeight / scene.scale + this.width * linkFrameAspect;
+				}
+			}
+			if (this.linkFrame.src !== links[0].href) this.linkFrame.src = links[0].href;
+			this.render();
+		}
+
+		textMinWidth() {
+			const previous = this.content.style.whiteSpace;
+			this.content.style.whiteSpace = "nowrap";
+			const width = this.content.scrollWidth / scene.scale;
+			this.content.style.whiteSpace = previous;
+			return width;
+		}
+
+		zoomBy(factor) {
+			if (this.linkFrame) {
+				this.frameZoom = clamp(this.frameZoom * factor, 0.05, 50);
+			} else {
+				this.fontSize = clamp(this.fontSize * factor, 1, 10000);
+			}
+			this.render();
+		}
+
 		showHandles(show) {
 			for (const h of this.handles) h.style.display = show ? "block" : "none";
 		}
@@ -441,12 +554,16 @@
 				startFontSize: this.fontSize,
 				startPanX: this.panX,
 				startPanY: this.panY,
+				minWidth: this.linkFrame ? this.textMinWidth() : 0,
 				ratio: (this.width && this.height) ? this.width / this.height : this.ratio,
 			};
+
+			document.body.classList.add("resizing");
 
 			const onMove = (ev) => this.resizeMove(ev);
 			const onUp = (ev) => {
 				this.resizing = null;
+				document.body.classList.remove("resizing");
 				document.removeEventListener("mousemove", onMove);
 				document.removeEventListener("mouseup", onUp);
 			};
@@ -517,9 +634,10 @@
 
 			// Clamp to a small minimum so we can't invert
 			const minSize = 10 / scene.scale;
-			if (newW < minSize) {
-				if (movesLeft) newX -= (minSize - newW);
-				newW = minSize;
+			const minWidth = Math.max(minSize, r.minWidth);
+			if (newW < minWidth) {
+				if (movesLeft) newX -= (minWidth - newW);
+				newW = minWidth;
 			}
 			if (newH < minSize) {
 				if (movesTop) newY -= (minSize - newH);
@@ -685,6 +803,7 @@
 				w: this.width,
 				creationScale: this.creationScale,
 				fontSize: this.fontSize,
+				frameZoom: this.frameZoom,
 				userScale: this.userScale,
 				panX: this.panX,
 				panY: this.panY,
@@ -736,6 +855,16 @@
 			}
 			
 			this.content.style.fontSize = (this.fontSize * scene.scale) + "px";
+			if (this.linkFrame) {
+				const box = this.linkFrame.parentElement;
+				const maxFrameSize = 8000;
+				const minScale = Math.max(box.clientWidth, box.clientHeight) / maxFrameSize;
+				const frameScale = Math.max(this.frameZoom * scene.scale, minScale);
+				// Overhang the box so the page's own scrollbar is clipped away
+				this.linkFrame.style.width = Math.round(box.clientWidth / frameScale) + frameScrollbarWidth + "px";
+				this.linkFrame.style.height = Math.round(box.clientHeight / frameScale) + "px";
+				this.linkFrame.style.transform = `scale(${frameScale})`;
+			}
 			// Images keep square clipping and no padding regardless of zoom
 			// so their edges stay sharp at the inner image bounds.
 			const isImage = (
@@ -998,7 +1127,6 @@
 			} else if (type === "text") {
 				const p = document.createElement("p");
 				this.data.path = path || "";
-				renderTextSource(p, this.data.path);
 				p.classList.add("textNode");
 				this.ratio = 5;
 
@@ -1011,10 +1139,14 @@
 				p.style.overflowY = "auto";
 				p.style.margin = "0";
 
-				// Track hover so pinch gestures can target this node's font size
-				this.elem.addEventListener("mouseenter", () => { hoveredTextNode = this; });
+				// Track hover so pinch gestures can target this node
+				this.elem.addEventListener("mouseenter", () => {
+					hoveredTextNode = this;
+					if (this.linkFrame) this.linkFrame.parentElement.classList.remove("active");
+				});
 				this.elem.addEventListener("mouseleave", () => {
 					if (hoveredTextNode === this) hoveredTextNode = null;
+					if (this.linkFrame) this.linkFrame.parentElement.classList.remove("active");
 				});
 
 				// Scroll the text content on wheel when there's Y overflow,
@@ -1094,7 +1226,7 @@
 				// Clear any text selection when losing focus
 				p.addEventListener("blur", () => {
 					this.data.path = p.innerText;
-					renderTextSource(p, this.data.path);
+					this.renderText(true);
 					
 					// Clear any text selection when the node loses focus
 					window.getSelection().removeAllRanges();
@@ -1226,15 +1358,14 @@
 				copy.click = new Vec({ x: e.clientX, y: e.clientY });
 				copy.depth = ++scene.topZ;
 				copy.render();
-				document.body.classList.add("grabbing");
 				document.addEventListener('mousemove', copy.boundMouseMove);
 				document.addEventListener('mouseup', copy.boundMouseUp);
 				return;
 			}
 
 			this.dragging = true;
+			this.didDrag = false;
 			this.click = new Vec({x: e.clientX, y: e.clientY});
-			document.body.classList.add("grabbing");
 
 			if (this.inStage) {
 				// Position on scene
@@ -1310,11 +1441,8 @@
 							const index = scene.selectedNodes.indexOf(this);
 							if (index > -1) {
 								// Remove outline from this specific node
-								if (this.content) {
-									this.content.style.outline = '';
-									this.content.style.outlineOffset = '';
-									console.log('Removed outline on deselect:', this.content);
-								}
+								this.elem.style.outline = '';
+								this.elem.style.outlineOffset = '';
 								scene.selectedNodes.splice(index, 1);
 							}
 						} else {
@@ -1339,6 +1467,10 @@
 				
 				const click = new Vec({x: e.clientX, y: e.clientY});
 				const delta = click.sub(this.click);
+				if (delta.x !== 0 || delta.y !== 0) {
+					this.didDrag = true;
+					document.body.classList.add("grabbing");
+				}
 				
 				// If this node is part of a selection, move all selected nodes
 				if (scene.selectedNodes.includes(this) && scene.selectedNodes.length > 1) {
@@ -1412,6 +1544,7 @@
 				x: round(this.origin.x, 2),
 				y: round(this.origin.y, 2),
 				scale: round(this.scale, 2),
+				stageOpen: stage.isOpen(),
 				children: this.children.map(c => c.serialize()),
 			}
 		}
@@ -1470,8 +1603,7 @@
 				// Pinch on a text node: scale its font, not the canvas
 				if (hoveredTextNode) {
 					const factor = Math.exp(-0.01 * e.deltaY);
-					hoveredTextNode.fontSize = clamp(hoveredTextNode.fontSize * factor, 1, 10000);
-					hoveredTextNode.render();
+					hoveredTextNode.zoomBy(factor);
 					return;
 				}
 
@@ -1504,9 +1636,7 @@
 
 			// Pinch on a text node: scale its font, not the canvas
 			if (hoveredTextNode) {
-				const factor = 1 + 0.2 * (e.scale - 1);
-				hoveredTextNode.fontSize = clamp(hoveredTextNode.fontSize * factor, 1, 10000);
-				hoveredTextNode.render();
+				hoveredTextNode.zoomBy(1 + 0.2 * (e.scale - 1));
 				return;
 			}
 
@@ -1536,6 +1666,7 @@
 			
 			// Start box selection
 			this.isSelecting = true;
+			document.body.classList.add("selecting");
 			this.selectionStart = new Vec({x: e.clientX, y: e.clientY});
 			
 			// Create the selection box element if it doesn't exist
@@ -1586,6 +1717,7 @@
 		
 		mouseup(e) {
 			e.preventDefault();
+			document.body.classList.remove("selecting");
 			
 			if (this.isSelecting && this.selectionBox) {
 				// Flag to prevent click event from clearing the selection
@@ -1651,30 +1783,19 @@
 			if (!this.selectedNodes.includes(node)) {
 				this.selectedNodes.push(node);
 				
-				// Add selection border to the first child element within the nodeInScene div
 				const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
 				
-				// The actual content element is node.content (the first child)
-				if (node.content) {
-					// Use outline instead of border to avoid shifting content
-					node.content.style.outline = `1px solid ${accentColor}`;
-					node.content.style.outlineOffset = '0px';
-					console.log('Applied outline to node content:', node.content);
-				} else {
-					console.log('No content element found for node:', node);
-				}
+				// Use outline instead of border to avoid shifting content
+				node.elem.style.outline = `1px solid ${accentColor}`;
+				node.elem.style.outlineOffset = '0px';
 			}
 		}
 		
 		clearSelection() {
 			// Remove selection styling from all nodes
 			this.selectedNodes.forEach(node => {
-				// Clear outline from the content element
-				if (node.content) {
-					node.content.style.outline = '';
-					node.content.style.outlineOffset = '';
-					console.log('Removed outline from node content:', node.content);
-				}
+				node.elem.style.outline = '';
+				node.elem.style.outlineOffset = '';
 			});
 			this.selectedNodes = [];
 		}
@@ -1753,8 +1874,20 @@
 			this.children.splice(idx, 1);
 		}
 		
+		setOpen(open) {
+			this.elem.classList.toggle("closed", !open);
+			if (!this.elem.classList.contains("animated")) {
+				void this.elem.offsetWidth;
+				this.elem.classList.add("animated");
+			}
+		}
+
+		isOpen() {
+			return !this.elem.classList.contains("closed");
+		}
+
 		toggle() {
-			this.elem.classList.toggle("closed");
+			this.setOpen(!this.isOpen());
 		}
 
 		inStage(v) {
@@ -1922,6 +2055,8 @@
 			}));
 		})
 		
+		stage.setOpen(layout.stageOpen !== false);
+
 		// Populate scene with layout
 		if (Object.keys(layout).length > 0) {
 			scene.origin = new Vec({
