@@ -333,7 +333,6 @@
 	}
 	
 	const linkFrameAspect = 3 / 4;
-	const frameScrollbarWidth = 20;
 
 	function resolveLinkHref(href) {
 		const trimmed = href.trim();
@@ -860,8 +859,7 @@
 				const maxFrameSize = 8000;
 				const minScale = Math.max(box.clientWidth, box.clientHeight) / maxFrameSize;
 				const frameScale = Math.max(this.frameZoom * scene.scale, minScale);
-				// Overhang the box so the page's own scrollbar is clipped away
-				this.linkFrame.style.width = Math.round(box.clientWidth / frameScale) + frameScrollbarWidth + "px";
+				this.linkFrame.style.width = Math.round(box.clientWidth / frameScale) + "px";
 				this.linkFrame.style.height = Math.round(box.clientHeight / frameScale) + "px";
 				this.linkFrame.style.transform = `scale(${frameScale})`;
 			}
