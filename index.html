@@ -518,19 +518,13 @@
 			this.render();
 		}
 
-		textMinWidth() {
-			const previous = this.content.style.whiteSpace;
-			this.content.style.whiteSpace = "nowrap";
-			const width = this.content.scrollWidth / scene.scale;
-			this.content.style.whiteSpace = previous;
-			return width;
-		}
-
-		zoomBy(factor) {
-			if (this.linkFrame) {
-				this.frameZoom = clamp(this.frameZoom * factor, 0.05, 50);
-			} else {
+		zoomBy(factor, target) {
+			const overText = !this.linkFrame ||
+				(target && target.closest && target.closest(".textNode") === this.content);
+			if (overText) {
 				this.fontSize = clamp(this.fontSize * factor, 1, 10000);
+			} else {
+				this.frameZoom = clamp(this.frameZoom * factor, 0.05, 50);
 			}
 			this.render();
 		}
@@ -553,7 +547,6 @@
 				startFontSize: this.fontSize,
 				startPanX: this.panX,
 				startPanY: this.panY,
-				minWidth: this.linkFrame ? this.textMinWidth() : 0,
 				ratio: (this.width && this.height) ? this.width / this.height : this.ratio,
 			};
 
@@ -633,10 +626,9 @@
 
 			// Clamp to a small minimum so we can't invert
 			const minSize = 10 / scene.scale;
-			const minWidth = Math.max(minSize, r.minWidth);
-			if (newW < minWidth) {
-				if (movesLeft) newX -= (minWidth - newW);
-				newW = minWidth;
+			if (newW < minSize) {
+				if (movesLeft) newX -= (minSize - newW);
+				newW = minSize;
 			}
 			if (newH < minSize) {
 				if (movesTop) newY -= (minSize - newH);
@@ -1335,16 +1327,10 @@
 				const copy = new this.constructor({
 					data: { ...this.data },
 					render: {
+						...this.serialize().render,
 						x: this.position.x + offset,
 						y: this.position.y + offset,
 						z: 4,
-						w: this.width,
-						h: this.height,
-						creationScale: this.creationScale,
-						fontSize: this.fontSize,
-						userScale: this.userScale,
-						panX: this.panX,
-						panY: this.panY,
 					},
 				});
 				scene.addNode(copy);
@@ -1601,7 +1587,7 @@
 				// Pinch on a text node: scale its font, not the canvas
 				if (hoveredTextNode) {
 					const factor = Math.exp(-0.01 * e.deltaY);
-					hoveredTextNode.zoomBy(factor);
+					hoveredTextNode.zoomBy(factor, e.target);
 					return;
 				}
 
@@ -1634,7 +1620,7 @@
 
 			// Pinch on a text node: scale its font, not the canvas
 			if (hoveredTextNode) {
-				hoveredTextNode.zoomBy(1 + 0.2 * (e.scale - 1));
+				hoveredTextNode.zoomBy(1 + 0.2 * (e.scale - 1), e.target);
 				return;
 			}
 
