@@ -187,6 +187,16 @@
 		display: none;
 	}
 
+	.textNode a {
+		color: var(--accent);
+		text-decoration: underline;
+		cursor: inherit;
+	}
+
+	body.linkModifier .textNode a {
+		cursor: pointer;
+	}
+
 	.dirNode {
 		margin: 0px;
 		border-radius: 0;
@@ -414,6 +424,19 @@
 		}
 	}
 	
+	function resolveLinkHref(href) {
+		const trimmed = href.trim();
+		if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) || /^[/#]/.test(trimmed)) return trimmed;
+		return "https://" + trimmed;
+	}
+
+	function renderTextSource(p, source) {
+		p.innerHTML = source;
+		for (const link of p.querySelectorAll("a")) {
+			link.setAttribute("href", resolveLinkHref(link.getAttribute("href") || ""));
+		}
+	}
+
 	class Node {
 		constructor({ render, data }) {
 			const {
@@ -1099,7 +1122,8 @@
 				
 			} else if (type === "text") {
 				const p = document.createElement("p");
-				p.innerHTML = path || "";
+				this.data.path = path || "";
+				renderTextSource(p, this.data.path);
 				p.classList.add("textNode");
 				this.ratio = 5;
 
@@ -1150,7 +1174,13 @@
 				p.addEventListener("mousedown", (e) => {
 					// Check if the text node is being dragged vs. edited
 					const isEditMode = document.activeElement === p;
-					
+
+					if (e.altKey && e.target.closest("a")) {
+						e.preventDefault();
+						e.stopPropagation();
+						return;
+					}
+
 					if (isEditMode) {
 						// We're already focused and editing text - prevent dragging behavior
 						e.stopPropagation();
@@ -1162,7 +1192,16 @@
 				p.addEventListener("click", (e) => {
 					// Always stop propagation for clicks inside text nodes
 					e.stopPropagation();
-					
+
+					const link = e.target.closest("a");
+					if (link) {
+						e.preventDefault();
+						if (e.altKey) {
+							window.open(link.href, "_blank", "noopener");
+							return;
+						}
+					}
+
 					// Focus the text node if not already focused
 					if (document.activeElement !== p) {
 						p.focus();
@@ -1179,10 +1218,8 @@
 				});
 				// Clear any text selection when losing focus
 				p.addEventListener("blur", () => {
-					if (p.innerHTML.trim() === "") {
-						p.innerHTML = "";
-					}
-					this.data.path = p.innerHTML;
+					this.data.path = p.innerText;
+					renderTextSource(p, this.data.path);
 					
 					// Clear any text selection when the node loses focus
 					window.getSelection().removeAllRanges();
@@ -1201,6 +1238,7 @@
 				// Make sure cursor style updates immediately when focus changes
 				p.addEventListener("focus", () => {
 					p.style.cursor = "text";
+					p.textContent = this.data.path;
 				});
 				
 				// Reset cursor when mouse leaves the element
@@ -1210,14 +1248,20 @@
 					}
 				});
 				p.onkeyup = (e) => {
-					this.data.path = p.innerHTML;
+					this.data.path = p.innerText;
 				}
+
+				p.addEventListener("paste", (e) => {
+					if (!e.clipboardData) return;
+					e.preventDefault();
+					document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+				});
 				// Auto-grow the box vertically as the user types so content
 				// doesn't disappear behind a scrollbar. Manual resize still wins
 				// (the box won't shrink on its own; the user can resize down to
 				// force scrolling).
 				p.addEventListener("input", () => {
-					this.data.path = p.innerHTML;
+					this.data.path = p.innerText;
 					// Some browsers scroll the document to keep the contenteditable
 					// caret in view; we manage view ourselves via the scene origin,
 					// so undo any such shift.
@@ -2080,6 +2124,17 @@
 	
 	// Initial setup of handlers
 	setupWebSocketHandlers();
+
+	const setLinkModifier = (active) => {
+		document.body.classList.toggle("linkModifier", active);
+	};
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Alt") setLinkModifier(true);
+	});
+	document.addEventListener("keyup", (e) => {
+		if (e.key === "Alt") setLinkModifier(false);
+	});
+	window.addEventListener("blur", () => setLinkModifier(false));
 
 	// Track cursor so paste events can be positioned under it
 	let lastMouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
