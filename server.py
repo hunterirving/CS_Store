@@ -3,7 +3,10 @@ import mimetypes
 import json
 import logging
 import base64
+import html
+import re
 import time
+import tornado.httpclient
 import tornado.ioloop
 import tornado.web
 import tornado.websocket
@@ -23,6 +26,39 @@ VALID_TYPES = [
 	"application/pdf",
 	"audio/mpeg"
 ]
+
+SVG_PATTERN = re.compile(rb"<svg\b.*?</svg\s*>", re.IGNORECASE | re.DOTALL)
+TITLE_PATTERN = re.compile(rb"<title[^>]*>(.*?)</title\s*>", re.IGNORECASE | re.DOTALL)
+CHARSET_PATTERN = re.compile(rb"charset\s*=\s*[\"\']?([a-z0-9_-]+)", re.IGNORECASE)
+BROWSER_USER_AGENT = (
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+	"(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+def body_encoding(response):
+	for source in (response.headers.get("Content-Type", "").encode(), response.body[:4096]):
+		found = CHARSET_PATTERN.search(source)
+		if found:
+			return found.group(1).decode("ascii", "replace")
+	return "utf-8"
+
+async def fetch_page_title(url):
+	response = await tornado.httpclient.AsyncHTTPClient().fetch(
+		url,
+		follow_redirects=True,
+		user_agent=BROWSER_USER_AGENT,
+		connect_timeout=10,
+		request_timeout=20,
+	)
+	match = TITLE_PATTERN.search(SVG_PATTERN.sub(b"", response.body))
+	if not match:
+		logger.warning(f"No <title> found at {url}")
+		return None
+	try:
+		text = match.group(1).decode(body_encoding(response), "replace")
+	except LookupError:
+		text = match.group(1).decode("utf-8", "replace")
+	return " ".join(html.unescape(text).split()) or None
 
 def save_layout(layout):
 	global FILE_PATH
@@ -127,6 +163,9 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 			except Exception as e:
 				logger.error(f"Error saving pasted image: {str(e)}")
 
+		elif message["type"] == "page_title":
+			tornado.ioloop.IOLoop.current().add_callback(self.send_page_title, message["url"])
+
 		elif message["type"] == "cd":
 			FILE_PATH = message["path"]
 			os.chdir(FILE_PATH)
@@ -134,6 +173,19 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 			response = pwd()
 			self.write_message(json.dumps(response))
 			logger.info(f"Changed directory to {FILE_PATH}")
+
+	async def send_page_title(self, url):
+		try:
+			title = await fetch_page_title(url)
+			logger.info(f"Title for {url}: {title}")
+		except Exception as e:
+			logger.error(f"Error fetching title for {url}: {str(e)}")
+			title = None
+		self.write_message(json.dumps({
+			"type": "page_title",
+			"url": url,
+			"title": title,
+		}))
 
 	def open(self):
 		logger.info("WebSocket connection opened")

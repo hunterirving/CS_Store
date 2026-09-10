@@ -348,6 +348,33 @@
 		return "https://" + trimmed;
 	}
 
+	const bareLinkPattern = /^(?:https?:\/\/)?(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|localhost)(?::\d+)?(?:[/?#]\S*)?$/i;
+	const pageTitles = {};
+	const pendingTitles = {};
+
+	function bareLink(text) {
+		const trimmed = (text || "").trim();
+		return bareLinkPattern.test(trimmed) ? trimmed : null;
+	}
+
+	function requestPageTitle(href) {
+		if (href in pageTitles || pendingTitles[href]) return;
+		if (ws.readyState !== WebSocket.OPEN) return;
+		pendingTitles[href] = true;
+		ws.send(JSON.stringify({ type: "page_title", url: href }));
+	}
+
+	function handlePageTitle(parsed) {
+		delete pendingTitles[parsed.url];
+		if (!parsed.title) return;
+		pageTitles[parsed.url] = parsed.title;
+		for (const node of scene.children) {
+			if (node.type !== "text") continue;
+			if (document.activeElement === node.content) continue;
+			if (bareLink(node.data.path)) node.renderText();
+		}
+	}
+
 	class Node {
 		constructor({ render, data }) {
 			const {
@@ -464,9 +491,19 @@
 		}
 
 		renderText(sizeNewFrame) {
-			this.content.innerHTML = this.data.path;
-			for (const link of this.content.querySelectorAll("a")) {
-				link.setAttribute("href", resolveLinkHref(link.getAttribute("href") || ""));
+			const bare = bareLink(this.data.path);
+			if (bare) {
+				const href = resolveLinkHref(bare);
+				const anchor = document.createElement("a");
+				anchor.setAttribute("href", href);
+				anchor.textContent = pageTitles[href] || bare;
+				this.content.replaceChildren(anchor);
+				requestPageTitle(href);
+			} else {
+				this.content.innerHTML = this.data.path;
+				for (const link of this.content.querySelectorAll("a")) {
+					link.setAttribute("href", resolveLinkHref(link.getAttribute("href") || ""));
+				}
 			}
 			this.syncLinkFrame(sizeNewFrame);
 		}
@@ -2014,6 +2051,10 @@
 			try { _early = JSON.parse(e.data); } catch (_) {}
 			if (_early && _early.type === "image_saved") {
 				handlePastedImageSaved(_early);
+				return;
+			}
+			if (_early && _early.type === "page_title") {
+				handlePageTitle(_early);
 				return;
 			}
 
