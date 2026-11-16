@@ -60,9 +60,14 @@
 		width: 100%;
 		height: 100%;
 		overflow: hidden;
-		background-image: linear-gradient(to right, var(--highlight) 1px, transparent 1px),
-						  linear-gradient(to bottom, var(--highlight) 1px, transparent 1px);
 		background-color: var(--background);
+	}
+
+	#grid {
+		position: absolute;
+		top: 0;
+		left: 0;
+		pointer-events: none;
 	}
 
 	#stage {
@@ -1545,6 +1550,11 @@
 			this.selectionBox = null;
 			this.justFinishedBoxSelection = false;
 			
+			this.grid = document.createElement("canvas");
+			this.grid.id = "grid";
+			this.elem.appendChild(this.grid);
+			window.addEventListener("resize", () => this.updateBackgroundGrid());
+			
 			this.elem.addEventListener("wheel", (e) => this.wheel(e));
 			this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
 			this.elem.addEventListener("gesturechange", (e) => this.gesturechange(e));
@@ -1604,12 +1614,35 @@
 		}
 
 		updateBackgroundGrid() {
-			const gridSize = 100 * this.scale;
-			const offsetX = -this.origin.x * this.scale % gridSize;
-			const offsetY = -this.origin.y * this.scale % gridSize;
+			// The grid is drawn in device pixels, with each line snapped to a
+			// whole device pixel, so lines stay crisp at any zoom or display density.
+			const dpr = window.devicePixelRatio;
+			const canvas = this.grid;
+			const w = Math.ceil(this.elem.clientWidth * dpr);
+			const h = Math.ceil(this.elem.clientHeight * dpr);
+			if (canvas.width !== w || canvas.height !== h) {
+				canvas.width = w;
+				canvas.height = h;
+			}
+			canvas.style.width = (w / dpr) + "px";
+			canvas.style.height = (h / dpr) + "px";
 			
-			this.elem.style.backgroundSize = `${gridSize}px ${gridSize}px`;
-			this.elem.style.backgroundPosition = `${offsetX}px ${offsetY}px`;
+			const ctx = canvas.getContext("2d");
+			ctx.clearRect(0, 0, w, h);
+			
+			const gridSize = 100 * this.scale * dpr;
+			if (gridSize < 10 * dpr) return;
+			
+			const lineWidth = Math.max(1, Math.round(dpr));
+			ctx.fillStyle = getComputedStyle(this.elem).getPropertyValue("--highlight");
+			const startX = -this.origin.x * this.scale * dpr;
+			const startY = -this.origin.y * this.scale * dpr;
+			for (let i = Math.ceil(-startX / gridSize); startX + i * gridSize < w; i++) {
+				ctx.fillRect(Math.round(startX + i * gridSize), 0, lineWidth, h);
+			}
+			for (let i = Math.ceil(-startY / gridSize); startY + i * gridSize < h; i++) {
+				ctx.fillRect(0, Math.round(startY + i * gridSize), w, lineWidth);
+			}
 		}
 		
 		render() {
