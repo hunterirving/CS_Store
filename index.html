@@ -138,6 +138,13 @@
 		transform-origin: 0 0;
 	}
 
+	/* An explicit line height scales exactly with the layout font size.
+	   "normal" is rounded differently at each size. This value is what
+	   Firefox uses for "normal" with this font. */
+	.nodeInScene > .textNode {
+		line-height: 1.2125;
+	}
+
 	.textNode::-webkit-scrollbar {
 		display: none;
 	}
@@ -358,6 +365,7 @@
 	const audioTypes = ["audio/mpeg", "audio/flac", "audio/x-flac"];
 	// Font size, in px, at which scene text is laid out before it is scaled.
 	const textLayoutFontSize = 32;
+	const baselineRatios = {};
 
 	function resolveLinkHref(href) {
 		const trimmed = href.trim();
@@ -472,7 +480,7 @@
 			// Handles are centered on the node's edges/corners so their hitbox
 			// extends equally outward (past the selection outline) and inward.
 			// Corners are square; edges stretch between the corner footprints.
-			const T = 24; // total thickness of edge / corner handles, in px
+			const T = 10; // total thickness of edge / corner handles, in px
 			const positions = [
 				{ name: "nw", cursor: "nwse-resize", corner: true  },
 				{ name: "ne", cursor: "nesw-resize", corner: true  },
@@ -589,6 +597,25 @@
 			this.render();
 		}
 
+		// Distance from the top of a line to its baseline, as a fraction of
+		// the font size. Browsers round font metrics to whole px, so this
+		// differs slightly between layout font sizes.
+		baselineRatio(size) {
+			if (size in baselineRatios) return baselineRatios[size];
+			const probe = document.createElement("p");
+			probe.classList.add("textNode");
+			probe.style.fontSize = size + "px";
+			probe.style.visibility = "hidden";
+			const mark = document.createElement("span");
+			mark.style.display = "inline-block";
+			probe.append("x", mark);
+			this.elem.appendChild(probe);
+			const ratio = (mark.getBoundingClientRect().top - probe.getBoundingClientRect().top) / size;
+			probe.remove();
+			if (this.elem.isConnected && document.fonts.status === "loaded") baselineRatios[size] = ratio;
+			return ratio;
+		}
+
 		// Padding stays proportional to the font size (8px at the default 26px).
 		get padding() {
 			return this.fontSize * 8 / 26;
@@ -600,7 +627,19 @@
 
 		// Scene units per layout px of the text content.
 		textUnit() {
-			return this.isScaledText() ? this.fontSize / textLayoutFontSize : 1 / scene.scale;
+			return this.isScaledText() ? this.fontSize / this.layoutFontSize() : 1 / scene.scale;
+		}
+
+		// The text cursor is 1 layout px wide and is scaled along with the
+		// text. While a node is being edited, halve its layout font size
+		// until the scale is at least 1, so the cursor stays at least 1px wide.
+		layoutFontSize() {
+			let size = textLayoutFontSize;
+			if (document.activeElement === this.content) {
+				const onScreen = this.fontSize * scene.scale;
+				while (size > 8 && onScreen < size) size /= 2;
+			}
+			return size;
 		}
 
 		zoomBy(factor, target) {
@@ -939,7 +978,7 @@
 			// `unit` is the number of layout px per scene unit.
 			const isDir = this.type === "dir";
 			const scaledText = this.isScaledText();
-			const unit = scaledText ? textLayoutFontSize / this.fontSize : scene.scale;
+			const unit = scaledText ? this.layoutFontSize() / this.fontSize : scene.scale;
 			if (scaledText) {
 				const fitsText = isDir || this.linkFrame;
 				this.content.style.transform = `scale(${scene.scale / unit})`;
@@ -955,7 +994,17 @@
 				this.type === "image/gif"
 			);
 			if (!isImage) {
-				this.content.style.padding = (this.padding * unit) + "px";
+				const padding = this.padding * unit;
+				this.content.style.padding = padding + "px";
+				// Shift the text so its baseline is where the default layout
+				// size would put it, so the text does not move when editing
+				// switches the layout size.
+				const size = this.layoutFontSize();
+				if (scaledText && size !== textLayoutFontSize) {
+					const shift = (this.baselineRatio(textLayoutFontSize) - this.baselineRatio(size)) * size;
+					this.content.style.paddingTop = (padding + shift) + "px";
+					this.content.style.paddingBottom = Math.max(0, padding - shift) + "px";
+				}
 				this.content.style.borderRadius = (this.borderRadius * unit) + "px";
 			}
 			// The scaled text is out of normal flow, so anything sized or
@@ -1322,6 +1371,7 @@
 				// Clear any text selection when losing focus
 				p.addEventListener("blur", () => {
 					this.data.path = p.innerText;
+					this.render();
 					this.renderText(true);
 					
 					// Clear any text selection when the node loses focus
@@ -1342,6 +1392,7 @@
 				p.addEventListener("focus", () => {
 					p.style.cursor = "text";
 					p.textContent = this.data.path;
+					this.render();
 				});
 				
 				// Reset cursor when mouse leaves the element
@@ -1606,13 +1657,20 @@
 			this.selectionBox = null;
 			this.justFinishedBoxSelection = false;
 			
+			this.pinchNode = null;
+			this.pinchTarget = null;
+			this.lastPinchTs = 0;
+			
 			this.grid = document.createElement("canvas");
 			this.grid.id = "grid";
 			this.elem.appendChild(this.grid);
 			window.addEventListener("resize", () => this.updateBackgroundGrid());
 			
 			this.elem.addEventListener("wheel", (e) => this.wheel(e));
-			this.elem.addEventListener("gesturestart", (e) => e.preventDefault());
+			this.elem.addEventListener("gesturestart", (e) => {
+				e.preventDefault();
+				this.startPinch(e);
+			});
 			this.elem.addEventListener("gesturechange", (e) => this.gesturechange(e));
 			this.elem.addEventListener("gestureend", (e) => e.preventDefault());
 			this.elem.addEventListener("mousedown", (e) => this.mousedown(e));
@@ -1716,10 +1774,17 @@
 			lastWheelNode = null;
 
 			if (e.ctrlKey) {
+				// A pinch keeps the target it started on, so the canvas zoom
+				// does not switch to a node that moves under the pointer.
+				// Wheel events have no gesture start, so a pause marks one.
+				const now = performance.now();
+				if (now - this.lastPinchTs > 120) this.startPinch(e);
+				this.lastPinchTs = now;
+
 				// Pinch on a text node: scale its font, not the canvas
-				if (hoveredTextNode) {
+				if (this.pinchNode) {
 					const factor = Math.exp(-0.01 * e.deltaY);
-					hoveredTextNode.zoomBy(factor, e.target);
+					this.pinchNode.zoomBy(factor, this.pinchTarget);
 					return;
 				}
 
@@ -1747,12 +1812,17 @@
 			this.render();
 		}
 		
+		startPinch(e) {
+			this.pinchNode = hoveredTextNode;
+			this.pinchTarget = e.target;
+		}
+
 		gesturechange(e) {
 			e.preventDefault();
 
 			// Pinch on a text node: scale its font, not the canvas
-			if (hoveredTextNode) {
-				hoveredTextNode.zoomBy(1 + 0.2 * (e.scale - 1), e.target);
+			if (this.pinchNode) {
+				this.pinchNode.zoomBy(1 + 0.2 * (e.scale - 1), this.pinchTarget);
 				return;
 			}
 
