@@ -354,6 +354,8 @@
 	}
 	
 	const linkFrameAspect = 3 / 4;
+	// Python reports FLAC as "audio/x-flac" on some versions.
+	const audioTypes = ["audio/mpeg", "audio/flac", "audio/x-flac"];
 	// Font size, in px, at which scene text is laid out before it is scaled.
 	const textLayoutFontSize = 32;
 
@@ -421,7 +423,6 @@
 			this.height = h;
 			this.ratio = w / h;
 			this.creationScale = creationScale;
-			this.padding = 8 / creationScale;
 			this.fontSize = fontSize !== null ? fontSize : 26 / creationScale;
 			this.frameZoom = frameZoom !== null ? frameZoom : 1 / creationScale;
 			this.borderRadius = 0;
@@ -462,7 +463,7 @@
 			// Resize handles (only meaningful for resizable types; skipped for dirs)
 			this.resizing = null;
 			this.handles = [];
-			if (this.type !== "dir" && this.type !== "audio/mpeg") {
+			if (this.type !== "dir" && !audioTypes.includes(this.type)) {
 				this.createResizeHandles();
 			}
 		}
@@ -586,6 +587,11 @@
 			}
 			if (this.linkFrame.src !== links[0].href) this.linkFrame.src = links[0].href;
 			this.render();
+		}
+
+		// Padding stays proportional to the font size (8px at the default 26px).
+		get padding() {
+			return this.fontSize * 8 / 26;
 		}
 
 		isScaledText() {
@@ -903,7 +909,11 @@
 				this.elem.style.top = pos.y + "px";
 				this.elem.style.zIndex = this.depth;
 				this.elem.style.width = (this.width * scene.scale) + "px";
-				this.elem.style.height = (this.height * scene.scale) + "px";
+				// The audio player's height does not scale with zoom, so the
+				// node takes its height from its content.
+				this.elem.style.height = audioTypes.includes(this.type)
+					? "auto"
+					: (this.height * scene.scale) + "px";
 			}
 			this.elem.style.borderRadius = (this.borderRadius * scene.scale) + "px";
 			//this.elem.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--highlight').trim();
@@ -974,7 +984,7 @@
 		}
 
 		setAutoplay() {
-			if (this.type === "audio/mpeg" && !this.inStage) {
+			if (audioTypes.includes(this.type) && !this.inStage) {
 				const audio = this.content.querySelector('audio');
 				if (audio) {
 					audio.loop = true;
@@ -984,7 +994,7 @@
 		}
 
 		triggerAutoplay() {
-			if (this.type === "audio/mpeg" && !this.inStage) {
+			if (audioTypes.includes(this.type) && !this.inStage) {
 				const audio = this.content.querySelector('audio');
 				if (audio && this.elem.getAttribute('data-autoplay') === 'true') {
 					audio.autoplay = true;
@@ -994,7 +1004,7 @@
 		}
 
 		setupAudioNodes() {
-			if (this.type === "audio/mpeg" && !this.audioSource && audioContext) {
+			if (audioTypes.includes(this.type) && !this.audioSource && audioContext) {
 				const audio = this.content.querySelector('audio');
 				if (audio) {
 					this.audioSource = audioContext.createMediaElementSource(audio);
@@ -1057,7 +1067,7 @@
 
 				return wrap;
 				
-			} else if (type === "audio/mpeg") {
+			} else if (audioTypes.includes(type)) {
 				const audioContainer = document.createElement("div");
 				audioContainer.style.display = "flex";
 				audioContainer.style.flexDirection = "column";
@@ -1489,7 +1499,7 @@
 				});
 				
 				// For video and audio elements, add a safety mechanism
-				if (this.data.type === "video/mp4" || this.data.type === "audio/mpeg") {
+				if (this.data.type === "video/mp4" || audioTypes.includes(this.data.type)) {
 					// Global handler that will clear selection on mouseup
 					const globalMouseUp = () => {
 						copy.dragging = false;

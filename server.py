@@ -24,7 +24,9 @@ VALID_TYPES = [
 	"image/gif",
 	"video/mp4",
 	"application/pdf",
-	"audio/mpeg"
+	"audio/mpeg",
+	"audio/flac",
+	"audio/x-flac"
 ]
 
 SVG_PATTERN = re.compile(rb"<svg\b.*?</svg\s*>", re.IGNORECASE | re.DOTALL)
