@@ -130,6 +130,14 @@
 		scrollbar-width: none;
 	}
 
+	.nodeInScene > .textNode, .nodeInScene > .dirNode {
+		position: absolute;
+		left: 0;
+		top: 0;
+		box-sizing: border-box;
+		transform-origin: 0 0;
+	}
+
 	.textNode::-webkit-scrollbar {
 		display: none;
 	}
@@ -346,6 +354,8 @@
 	}
 	
 	const linkFrameAspect = 3 / 4;
+	// Font size, in px, at which scene text is laid out before it is scaled.
+	const textLayoutFontSize = 32;
 
 	function resolveLinkHref(href) {
 		const trimmed = href.trim();
@@ -425,6 +435,15 @@
 			this.content = this.populateContent(data);
 			this.elem.appendChild(this.content);
 			if (this.type === "text") this.renderText();
+			// Link titles and directory labels size themselves to their text,
+			// and the node layout around them is derived from that size, so
+			// re-render when it changes (for example, while editing a link).
+			if (this.type === "text" || this.type === "dir") {
+				new ResizeObserver(() => {
+					if (this.inStage) return;
+					if (this.linkFrame || this.type === "dir") this.render();
+				}).observe(this.content);
+			}
 			
 			// Interaction helpers
 			this.dragging = false;
@@ -525,6 +544,7 @@
 					this.elem.style.flexDirection = "";
 					this.content.style.height = "100%";
 					this.content.style.flex = "";
+					this.render();
 				}
 				return;
 			}
@@ -561,11 +581,20 @@
 				this.content.style.height = "auto";
 				this.content.style.flex = "0 0 auto";
 				if (sizeNewFrame) {
-					this.height = this.content.offsetHeight / scene.scale + this.width * linkFrameAspect;
+					this.height = this.content.offsetHeight * this.textUnit() + this.width * linkFrameAspect;
 				}
 			}
 			if (this.linkFrame.src !== links[0].href) this.linkFrame.src = links[0].href;
 			this.render();
+		}
+
+		isScaledText() {
+			return !this.inStage && (this.type === "dir" || this.type === "text");
+		}
+
+		// Scene units per layout px of the text content.
+		textUnit() {
+			return this.isScaledText() ? this.fontSize / textLayoutFontSize : 1 / scene.scale;
 		}
 
 		zoomBy(factor, target) {
@@ -895,16 +924,19 @@
 					`translate(-50%, -50%) scale(${totalScale}) translate(${this.panX}px, ${this.panY}px)`;
 			}
 			
-			this.content.style.fontSize = (this.fontSize * scene.scale) + "px";
-			if (this.linkFrame) {
-				const box = this.linkFrame.parentElement;
-				const maxFrameSize = 8000;
-				const minScale = Math.max(box.clientWidth, box.clientHeight) / maxFrameSize;
-				const frameScale = Math.max(this.frameZoom * scene.scale, minScale);
-				this.linkFrame.style.width = Math.round(box.clientWidth / frameScale) + "px";
-				this.linkFrame.style.height = Math.round(box.clientHeight / frameScale) + "px";
-				this.linkFrame.style.transform = `scale(${frameScale})`;
+			// Scene text is laid out at a fixed font size and scaled with a
+			// transform, so zooming never changes glyph spacing or line wraps.
+			// `unit` is the number of layout px per scene unit.
+			const isDir = this.type === "dir";
+			const scaledText = this.isScaledText();
+			const unit = scaledText ? textLayoutFontSize / this.fontSize : scene.scale;
+			if (scaledText) {
+				const fitsText = isDir || this.linkFrame;
+				this.content.style.transform = `scale(${scene.scale / unit})`;
+				this.content.style.width = (this.width * unit) + "px";
+				this.content.style.height = fitsText ? "auto" : (this.height * unit) + "px";
 			}
+			this.content.style.fontSize = (this.fontSize * unit) + "px";
 			// Images keep square clipping and no padding regardless of zoom
 			// so their edges stay sharp at the inner image bounds.
 			const isImage = (
@@ -913,8 +945,22 @@
 				this.type === "image/gif"
 			);
 			if (!isImage) {
-				this.content.style.padding = (this.padding * scene.scale) + "px";
-				this.content.style.borderRadius = (this.borderRadius * scene.scale) + "px";
+				this.content.style.padding = (this.padding * unit) + "px";
+				this.content.style.borderRadius = (this.borderRadius * unit) + "px";
+			}
+			// The scaled text is out of normal flow, so anything sized or
+			// placed by its height is set from a measurement.
+			const textHeight = scaledText ? this.content.offsetHeight * scene.scale / unit : 0;
+			if (isDir && scaledText) this.elem.style.height = textHeight + "px";
+			if (this.linkFrame) {
+				const box = this.linkFrame.parentElement;
+				if (scaledText) box.style.marginTop = textHeight + "px";
+				const maxFrameSize = 8000;
+				const minScale = Math.max(box.clientWidth, box.clientHeight) / maxFrameSize;
+				const frameScale = Math.max(this.frameZoom * scene.scale, minScale);
+				this.linkFrame.style.width = Math.round(box.clientWidth / frameScale) + "px";
+				this.linkFrame.style.height = Math.round(box.clientHeight / frameScale) + "px";
+				this.linkFrame.style.transform = `scale(${frameScale})`;
 			}
 			this.content.style.color = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
 			this.content.style.fontFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-family').trim();
@@ -1211,7 +1257,7 @@
 
 					e.preventDefault();
 					e.stopPropagation();
-					p.scrollTop += e.deltaY;
+					p.scrollTop += e.deltaY / (this.textUnit() * scene.scale);
 				}, { passive: false });
 
 				p.contentEditable = "true";
@@ -1317,7 +1363,7 @@
 					document.body.scrollTop = 0;
 					document.body.scrollLeft = 0;
 					if (this.inStage) return;
-					const needed = p.scrollHeight / scene.scale;
+					const needed = p.scrollHeight * this.textUnit();
 					if (needed > this.height) {
 						this.height = needed;
 						this.render();
@@ -1901,7 +1947,7 @@
 			scene.addNode(node);
 			// Snap height to whatever the empty <p> actually needs after layout
 			requestAnimationFrame(() => {
-				const needed = node.content.scrollHeight / scene.scale;
+				const needed = node.content.scrollHeight * node.textUnit();
 				if (needed > 0) {
 					node.height = needed;
 					node.render();
